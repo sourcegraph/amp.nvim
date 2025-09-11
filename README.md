@@ -1,4 +1,4 @@
-# Neovim Plugin
+# Amp Neovim Plugin
 
 Very experimental code for a neovim plugin. Only for internal testing!
 
