@@ -21,6 +21,7 @@ Install the plugin by adding this code to your lazy.vim config:
 - Notify Amp about currently open file (you need to select a file, there's currently no initial sync)
 - Notify Amp about selected code
 - Read and edit files through the Nvim buffer (while also writing to disk)
+  - We talked about changing this to writing to disk by default, and then telling nvim to reload. That may however cause issues with fresh buffers that have no file yet. Let us know what you think!
 
 ## Feature Ideas
 
