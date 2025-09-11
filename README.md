@@ -8,12 +8,12 @@ Install the plugin by adding this code to your lazy.vim config:
 
 ```lua
   -- Amp Plugin
-  {
-    dir = "/<path-to-the-amp.nvim-repo>",
-    name = "amp",
-    lazy = false,
-    opts = { auto_start = true, log_level = "info" },
-  },
+{
+  "sourcegraph/amp.nvim",
+  branch = "main", 
+  lazy = false,
+  opts = { auto_start = true, log_level = "info" },
+}
 ```
 
 ## Features
