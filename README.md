@@ -16,6 +16,12 @@ Install the plugin by adding this code to your lazy.vim config:
   },
 ```
 
+## Features
+
+- Notify Amp about currently open file (you need to select a file, there's currently no initial sync)
+- Notify Amp about selected code
+- Read and edit files through the Nvim buffer (while also writing to disk)
+
 ## Feature Ideas
 
 - When I ask Amp to show me a particular section of code, it would be nice if Amp could open that file and select the code for me.
