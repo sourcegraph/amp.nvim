@@ -43,30 +43,31 @@ function M.validate_upgrade_request(request, expected_auth_token)
 
     -- Check query parameters
     local method, path = M.parse_request_line(request)
+    local provided_token
     if path then
-      auth_token = utils.extract_query_param(path, "auth")
+      provided_token = utils.extract_query_param(path, "auth")
     end
 
     -- If still no auth token found
-    if not auth_token then
+    if not provided_token then
       return false, "Missing authentication token (expected in query parameter 'auth')"
     end
 
     -- Check for empty auth token
-    if auth_token == "" then
+    if provided_token == "" then
       return false, "Authentication token too short (min 10 characters)"
     end
 
     -- Check for suspicious auth token lengths
-    if #auth_token > 500 then
+    if #provided_token > 500 then
       return false, "Authentication token too long (max 500 characters)"
     end
 
-    if #auth_token < 10 then
+    if #provided_token < 10 then
       return false, "Authentication token too short (min 10 characters)"
     end
 
-    if auth_token ~= expected_auth_token then
+    if provided_token ~= expected_auth_token then
       return false, "Invalid authentication token"
     end
   end

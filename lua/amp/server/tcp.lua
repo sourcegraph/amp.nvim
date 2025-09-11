@@ -55,14 +55,24 @@ end
 ---@return TCPServer|nil server The server object, or nil on error
 ---@return string|nil error Error message if failed
 function M.create_server(config, callbacks, auth_token)
-  local port = M.find_available_port(config.port_range.min, config.port_range.max)
-  if not port then
-    return nil, "No available ports in range " .. config.port_range.min .. "-" .. config.port_range.max
-  end
-
   local tcp_server = vim.loop.new_tcp()
   if not tcp_server then
     return nil, "Failed to create TCP server"
+  end
+
+  -- Let the OS choose an available port
+  local bind_success, bind_err = tcp_server:bind("127.0.0.1", 0)
+  if not bind_success then
+    tcp_server:close()
+    return nil, "Failed to bind to any port: " .. (bind_err or "unknown error")
+  end
+
+  -- Get the actual port assigned by the OS
+  local sockname = tcp_server:getsockname()
+  local port = sockname and sockname.port
+  if not port then
+    tcp_server:close()
+    return nil, "Failed to get assigned port"
   end
 
   -- Create server object
@@ -76,12 +86,6 @@ function M.create_server(config, callbacks, auth_token)
     on_disconnect = callbacks.on_disconnect or function() end,
     on_error = callbacks.on_error or function() end,
   }
-
-  local bind_success, bind_err = tcp_server:bind("127.0.0.1", port)
-  if not bind_success then
-    tcp_server:close()
-    return nil, "Failed to bind to port " .. port .. ": " .. (bind_err or "unknown error")
-  end
 
   -- Start listening
   local listen_success, listen_err = tcp_server:listen(128, function(err)

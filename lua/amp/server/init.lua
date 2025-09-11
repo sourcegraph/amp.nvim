@@ -177,13 +177,27 @@ function M._handle_message(client, message)
       return
     end
 
+    -- Use async file reading with vim.loop
+    local uv = vim.loop
     local success, content = pcall(function()
-      local file = io.open(path, 'r')
-      if not file then
+      local fd = uv.fs_open(path, "r", 438)  -- 438 = 0666 in decimal
+      if not fd then
         error("File not found or cannot be opened")
       end
-      local data = file:read('*all')
-      file:close()
+      
+      local stat = uv.fs_fstat(fd)
+      if not stat then
+        uv.fs_close(fd)
+        error("Cannot stat file")
+      end
+      
+      local data = uv.fs_read(fd, stat.size, 0)
+      uv.fs_close(fd)
+      
+      if not data then
+        error("Cannot read file")
+      end
+      
       return data
     end)
 
@@ -251,10 +265,18 @@ function M._handle_message(client, message)
       -- Replace entire buffer content
       vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
       
-      -- Save the buffer using Neovim's write mechanism
-      vim.api.nvim_buf_call(bufnr, function()
-        vim.cmd('silent write')
-      end)
+      -- Use async file writing with vim.loop
+      local uv = vim.loop
+      local fd = uv.fs_open(full_path, "w", 438)  -- 438 = 0666 in decimal
+      if not fd then
+        error("Cannot open file for writing")
+      end
+      
+      uv.fs_write(fd, fullContent, 0)
+      uv.fs_close(fd)
+      
+      -- Mark buffer as not modified since we just saved it
+      vim.api.nvim_buf_set_option(bufnr, 'modified', false)
     end)
 
     if success then
