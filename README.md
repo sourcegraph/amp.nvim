@@ -25,6 +25,7 @@ Install the plugin by adding this code to your lazy.vim config:
 
 ## Feature Ideas
 
+- Better reconnect: Nvim users are much more likely to reopen their IDE than JetBrains users. Because of that, we should check if we can automatically reconnect to an IDE in the same path that we had the last connection with.
 - When I ask Amp to show me a particular section of code, it would be nice if Amp could open that file and select the code for me.
 - Should we keep the code selection when moving between tab? Currently you can't switch to a split terminal if you don't want to loose the selection, i.e. making the built in terminal unfeasible for code selection.
 
