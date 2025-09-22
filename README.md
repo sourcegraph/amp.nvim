@@ -2,7 +2,7 @@
 
 Very experimental code for a neovim plugin. Only for internal testing!
 
-Once installed, run `amp --jetbrains` without any other JetBrains IDEs running, only one nvim pls!
+Once installed, run `amp --ide` without any other JetBrains IDEs running, only one nvim pls!
 
 Install the plugin by adding this code to your lazy.vim config:
 
