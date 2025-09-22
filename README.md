@@ -16,6 +16,15 @@ Install the plugin by adding this code to your lazy.vim config:
 }
 ```
 
+## Development
+
+Uses `stylua` for general formatting, and `lua-language-server` for linting.
+
+```bash
+stylua .
+nvim --headless --clean -c ':!lua-language-server --check .' -c 'qa'
+```
+
 ## Features
 
 - Notify Amp about currently open file (you need to select a file, there's currently no initial sync)
