@@ -131,7 +131,7 @@ function M._create_autocommands()
 	-- Buffer events
 	vim.api.nvim_create_autocmd({ "BufWinEnter", "BufWinLeave" }, {
 		group = group,
-		callback = function(args)
+		callback = function(_)
 			-- Small delay to let window/buffer state settle
 			vim.defer_fn(function()
 				M.broadcast_visible_files()
