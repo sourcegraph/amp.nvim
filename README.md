@@ -1,9 +1,5 @@
 # Amp Neovim Plugin
 
-Very experimental code for a neovim plugin. Only for internal testing!
-
-Once installed, run `amp --ide`!
-
 Install the plugin by adding this code to your lazy.vim config:
 
 ```lua
@@ -15,6 +11,8 @@ Install the plugin by adding this code to your lazy.vim config:
   opts = { auto_start = true, log_level = "info" },
 }
 ```
+
+Once installed, run `amp --ide`.
 
 ## Development
 
