@@ -1,11 +1,9 @@
 # Amp Neovim Plugin
 
-
-
+This plugin allows the [Amp CLI](https://ampcode.com/manual#cli) to see the file you currently have open in your Neovim instance, along with your cursor position and your text selection.
 
 
 https://github.com/user-attachments/assets/3a5f136f-7b0a-445f-90be-b4e5b28a7e82
-
 
 
 ## Installation
