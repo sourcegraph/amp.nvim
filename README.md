@@ -1,5 +1,15 @@
 # Amp Neovim Plugin
 
+
+
+
+
+https://github.com/user-attachments/assets/3a5f136f-7b0a-445f-90be-b4e5b28a7e82
+
+
+
+## Installation
+
 Install the plugin by adding this code to your lazy.vim config:
 
 ```lua
