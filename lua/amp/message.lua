@@ -196,7 +196,7 @@ end
 ---Create user commands for message functionality
 function M.create_commands()
 	-- Command to send a message directly
-	vim.api.nvim_create_user_command("AmpSendMessage", function(opts)
+	vim.api.nvim_create_user_command("Amp", function(opts)
 		local message = opts.args
 		if message == "" then
 			logger.warn("message", "Please provide a message to send")
@@ -224,7 +224,7 @@ function M.create_commands()
 	})
 
 	-- Command to open draft message buffer
-	vim.api.nvim_create_user_command("AmpDraftMessage", function()
+	vim.api.nvim_create_user_command("AmpDraft", function()
 		M.open_draft("horizontal")
 	end, { desc = "Open draft message buffer for Amp agent" })
 end

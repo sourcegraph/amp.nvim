@@ -44,11 +44,11 @@ nvim --headless --clean -c ':!lua-language-server --check .' -c 'qa'
 
 ### Message Commands
 
-- `:AmpSendMessage <your message>` - Send a message directly to the Amp agent
+- `:Amp <your message>` - Send a message directly to the Amp agent
   - Preserves visual selections, so you can select code and send messages about it
-  - Example: Select some code, then `:AmpSendMessage explain this function`
+  - Example: Select some code, then `:Amp explain this function`
 
-- `:AmpDraftMessage` - Open a scratch buffer to compose a message
+- `:AmpDraft` - Open a scratch buffer to compose a message
   - Opens in a horizontal split for writing longer messages
   - Use `:AmpSendDraft` to send the message and close the buffer
 
