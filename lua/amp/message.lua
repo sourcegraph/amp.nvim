@@ -10,7 +10,7 @@ M.state = {
 	draft_window = nil,
 }
 
----Send a message to the agent using messageDidSend notification
+---Send a message to the agent using userSentMessage notification
 ---@param message string The message to send
 ---@return boolean success Whether message was sent successfully
 function M.send_message(message)
@@ -21,7 +21,7 @@ function M.send_message(message)
 	end
 
 	local success = amp.state.server.broadcast_ide({
-		messageDidSend = { message = message },
+		userSentMessage = { message = message },
 	})
 
 	if success then
