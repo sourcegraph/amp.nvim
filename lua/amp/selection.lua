@@ -74,6 +74,12 @@ function M.get_cursor_position()
 	local current_buf = vim.api.nvim_get_current_buf()
 	local file_path = vim.api.nvim_buf_get_name(current_buf)
 
+	-- Skip draft message buffer
+	local message = require("amp.message")
+	if current_buf == message.get_draft_buffer() then
+		return nil
+	end
+
 	if file_path == "" or not file_path then
 		return nil
 	end
@@ -108,6 +114,12 @@ function M.get_visual_selection()
 
 	local current_buf = vim.api.nvim_get_current_buf()
 	local file_path = vim.api.nvim_buf_get_name(current_buf)
+
+	-- Skip draft message buffer
+	local message = require("amp.message")
+	if current_buf == message.get_draft_buffer() then
+		return nil
+	end
 
 	if file_path == "" or not file_path then
 		return nil

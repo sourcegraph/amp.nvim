@@ -50,11 +50,15 @@ function M.get_current_visible_files()
 	local uris = {}
 	local seen = {}
 
+	-- Get the draft message buffer to exclude it
+	local message = require("amp.message")
+	local draft_buffer = message.get_draft_buffer()
+
 	-- Get all buffers that are displayed in windows
 	for _, win in ipairs(vim.api.nvim_list_wins()) do
 		if vim.api.nvim_win_is_valid(win) then
 			local buf = vim.api.nvim_win_get_buf(win)
-			if vim.api.nvim_buf_is_valid(buf) then
+			if vim.api.nvim_buf_is_valid(buf) and buf ~= draft_buffer then
 				local name = vim.api.nvim_buf_get_name(buf)
 				if name ~= "" and not seen[name] then
 					-- Check if file exists before adding to URIs

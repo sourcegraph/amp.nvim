@@ -36,8 +36,52 @@ nvim --headless --clean -c ':!lua-language-server --check .' -c 'qa'
 - Notify Amp about currently open file (you need to select a file, there's currently no initial sync)
 - Notify Amp about selected code
 - Notify Amp about Neovim diagnostics
+- Send messages to the Amp agent
 - Read and edit files through the Nvim buffer (while also writing to disk)
   - We talked about changing this to writing to disk by default, and then telling nvim to reload. That may however cause issues with fresh buffers that have no file yet. Let us know what you think!
+
+## Commands
+
+### Message Commands
+
+- `:AmpSendMessage <your message>` - Send a message directly to the Amp agent
+  - Preserves visual selections, so you can select code and send messages about it
+  - Example: Select some code, then `:AmpSendMessage explain this function`
+
+- `:AmpDraftMessage` - Open a scratch buffer to compose a message
+  - Opens in a horizontal split for writing longer messages
+  - Use `:AmpSendDraft` to send the message and close the buffer
+
+### Custom Commands
+
+You can create custom commands using the Lua API:
+
+```lua
+-- Custom command to open draft in vertical split with specific width
+vim.api.nvim_create_user_command("AmpDraftV", function()
+  require("amp.message").open_draft_vertical(60, "right")  -- 60 columns wide on right
+end, { desc = "Open Amp draft message in vertical split" })
+
+-- Custom command to open draft on left side
+vim.api.nvim_create_user_command("AmpDraftLeft", function()
+  require("amp.message").open_draft_vertical(50, "left")  -- 50 columns on left
+end, { desc = "Open Amp draft message on left side" })
+
+-- Custom command to open draft in horizontal split with specific height  
+vim.api.nvim_create_user_command("AmpDraftH", function()
+  require("amp.message").open_draft_horizontal(10, "bottom")  -- 10 rows at bottom
+end, { desc = "Open Amp draft message in horizontal split" })
+
+-- Custom command to open draft at top
+vim.api.nvim_create_user_command("AmpDraftTop", function()
+  require("amp.message").open_draft_horizontal(8, "top")  -- 8 rows at top
+end, { desc = "Open Amp draft message at top" })
+
+-- Custom keybinding to send a predefined message
+vim.keymap.set("v", "<leader>ae", function()
+  vim.cmd("AmpSendMessage explain this code")
+end, { desc = "Ask Amp to explain selected code" })
+```
 
 ## Feature Ideas
 
