@@ -36,8 +36,45 @@ nvim --headless --clean -c ':!lua-language-server --check .' -c 'qa'
 - Notify Amp about currently open file (you need to select a file, there's currently no initial sync)
 - Notify Amp about selected code
 - Notify Amp about Neovim diagnostics
+- Send messages to the Amp agent
 - Read and edit files through the Nvim buffer (while also writing to disk)
   - We talked about changing this to writing to disk by default, and then telling nvim to reload. That may however cause issues with fresh buffers that have no file yet. Let us know what you think!
+
+## Sending Messages to Amp
+
+The plugin provides a simple `send_message` function that you can use to create your own commands and workflows. Here are two example commands you can add to your configuration, one to send a quick message, and one to send the contents of a buffer (useful for drafting longer messages):
+
+### Example Commands
+
+```lua
+-- Send a quick message to the agent
+vim.api.nvim_create_user_command("AmpSend", function(opts)
+  local message = opts.args
+  if message == "" then
+    print("Please provide a message to send")
+    return
+  end
+  
+  local amp_message = require("amp.message")
+  amp_message.send_message(message)
+end, {
+  nargs = "*",
+  desc = "Send a message to Amp",
+})
+
+-- Send entire buffer contents
+vim.api.nvim_create_user_command("AmpSendBuffer", function(opts)
+  local buf = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local content = table.concat(lines, "\n")
+  
+  local amp_message = require("amp.message")
+  amp_message.send_message(content)
+end, {
+  nargs = "?",
+  desc = "Send current buffer contents to Amp",
+})
+```
 
 ## Feature Ideas
 
