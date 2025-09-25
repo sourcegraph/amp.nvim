@@ -1,5 +1,4 @@
 ---@brief WebSocket server for Amp Neovim plugin
-local plugin_main = require("amp") -- For version access
 local logger = require("amp.logger")
 local tcp_server = require("amp.server.tcp")
 
@@ -11,13 +10,46 @@ local M = {}
 ---@field auth_token string|nil The authentication token for validating connections
 ---@field clients table<string, WebSocketClient> A list of connected clients
 ---@field ping_timer table|nil Timer for sending pings
+---@field event_listeners table<string, function[]> Event listeners by event name
 M.state = {
 	server = nil,
 	port = nil,
 	auth_token = nil,
 	clients = {},
 	ping_timer = nil,
+	event_listeners = {},
 }
+
+---Register a callback for an event
+---@param event_name string The name of the event to listen for
+---@param callback function The callback function to call when the event occurs
+function M.on(event_name, callback)
+	local listeners = M.state.event_listeners[event_name] or {}
+	table.insert(listeners, callback)
+	M.state.event_listeners[event_name] = listeners
+end
+
+---Remove a callback for an event
+---@param event_name string The name of the event
+---@param callback function The callback function to remove
+function M.off(event_name, callback)
+	local listeners = M.state.event_listeners[event_name] or {}
+	for i = #listeners, 1, -1 do
+		if listeners[i] == callback then
+			table.remove(listeners, i)
+		end
+	end
+end
+
+---Emit an event to all registered listeners
+---@param event_name string The name of the event to emit
+---@param ... any Arguments to pass to the event listeners
+function M._emit(event_name, ...)
+	local listeners = M.state.event_listeners[event_name] or {}
+	for _, callback in ipairs(listeners) do
+		callback(...)
+	end
+end
 
 ---Initialize the WebSocket server
 ---@param auth_token string|nil The authentication token for validating connections
@@ -52,6 +84,8 @@ function M.start(auth_token)
 				logger.debug("server", "IDE client connected (no auth):", client.id)
 			end
 
+			-- Emit client connect event
+			M._emit("client_connect", client)
 			-- Send initial state to newly connected client
 			vim.defer_fn(function()
 				M._send_state()
@@ -68,9 +102,15 @@ function M.start(auth_token)
 				", reason:",
 				(reason or "N/A") .. ")"
 			)
+
+			-- Emit client disconnect event
+			M._emit("client_disconnect", client, code, reason)
 		end,
 		on_error = function(error_msg)
 			logger.error("server", "IDE server error:", error_msg)
+			
+			-- Emit server error event
+			M._emit("server_error", error_msg)
 		end,
 	}
 
@@ -107,6 +147,7 @@ function M.stop()
 	M.state.port = nil
 	M.state.auth_token = nil
 	M.state.clients = {}
+	M.state.event_listeners = {}
 
 	return true
 end
