@@ -188,10 +188,6 @@ function M._create_commands()
 		M.stop()
 	end, { desc = "Stop Amp plugin server" })
 
-	-- Create message commands
-	local message = require("amp.message")
-	message.create_commands()
-
 	vim.api.nvim_create_user_command("AmpStatus", function()
 		if M.state.server and M.state.port then
 			logger.info("command", "Server is running on port " .. tostring(M.state.port))

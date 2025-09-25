@@ -40,47 +40,40 @@ nvim --headless --clean -c ':!lua-language-server --check .' -c 'qa'
 - Read and edit files through the Nvim buffer (while also writing to disk)
   - We talked about changing this to writing to disk by default, and then telling nvim to reload. That may however cause issues with fresh buffers that have no file yet. Let us know what you think!
 
-## Commands
+## Sending Messages to Amp
 
-### Message Commands
+The plugin provides a simple `send_message` function that you can use to create your own commands and workflows. Here are two example commands you can add to your configuration, one to send a quick message, and one to send the contents of a buffer (useful for drafting longer messages):
 
-- `:Amp <your message>` - Send a message directly to the Amp agent
-  - Preserves visual selections, so you can select code and send messages about it
-  - Example: Select some code, then `:Amp explain this function`
-
-- `:AmpDraft` - Open a scratch buffer to compose a message
-  - Opens in a horizontal split for writing longer messages
-  - Use `:AmpSendDraft` to send the message and close the buffer
-
-### Custom Commands
-
-You can create custom commands using the Lua API:
+### Example Commands
 
 ```lua
--- Custom command to open draft in vertical split with specific width
-vim.api.nvim_create_user_command("AmpDraftV", function()
-  require("amp.message").open_draft_vertical(60, "right")  -- 60 columns wide on right
-end, { desc = "Open Amp draft message in vertical split" })
+-- Send a quick message to the agent
+vim.api.nvim_create_user_command("AmpSend", function(opts)
+  local message = opts.args
+  if message == "" then
+    print("Please provide a message to send")
+    return
+  end
+  
+  local amp_message = require("amp.message")
+  amp_message.send_message(message)
+end, {
+  nargs = "*",
+  desc = "Send a message to Amp",
+})
 
--- Custom command to open draft on left side
-vim.api.nvim_create_user_command("AmpDraftLeft", function()
-  require("amp.message").open_draft_vertical(50, "left")  -- 50 columns on left
-end, { desc = "Open Amp draft message on left side" })
-
--- Custom command to open draft in horizontal split with specific height  
-vim.api.nvim_create_user_command("AmpDraftH", function()
-  require("amp.message").open_draft_horizontal(10, "bottom")  -- 10 rows at bottom
-end, { desc = "Open Amp draft message in horizontal split" })
-
--- Custom command to open draft at top
-vim.api.nvim_create_user_command("AmpDraftTop", function()
-  require("amp.message").open_draft_horizontal(8, "top")  -- 8 rows at top
-end, { desc = "Open Amp draft message at top" })
-
--- Custom keybinding to send a predefined message
-vim.keymap.set("v", "<leader>ae", function()
-  vim.cmd("AmpSendMessage explain this code")
-end, { desc = "Ask Amp to explain selected code" })
+-- Send entire buffer contents
+vim.api.nvim_create_user_command("AmpSendBuffer", function(opts)
+  local buf = vim.api.nvim_get_current_buf()
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  local content = table.concat(lines, "\n")
+  
+  local amp_message = require("amp.message")
+  amp_message.send_message(content)
+end, {
+  nargs = "?",
+  desc = "Send current buffer contents to Amp",
+})
 ```
 
 ## Feature Ideas
