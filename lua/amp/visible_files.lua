@@ -97,14 +97,14 @@ function M.have_files_changed(new_files)
 end
 
 ---Broadcast visible files if changed
-function M.broadcast_visible_files()
+function M.broadcast_visible_files(force)
 	if not M.state.tracking_enabled or not M.server then
 		return
 	end
 
 	local current_files = M.get_current_visible_files()
 
-	if M.have_files_changed(current_files) then
+	if force or M.have_files_changed(current_files) then
 		M.state.latest_files = current_files
 
 		M.server.broadcast_ide({

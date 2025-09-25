@@ -96,14 +96,14 @@ function M._vim_diagnostic_to_jetbrains(diagnostic)
 	}
 end
 
-function M.broadcast_diagnostics()
+function M.broadcast_diagnostics(force)
 	if not M.state.diagnostics_enabled or not M.server then
 		return
 	end
 
 	local diagnostics = vim.diagnostic.get(nil)
 
-	if M.have_diagnostics_changed(diagnostics) then
+	if force or M.have_diagnostics_changed(diagnostics) then
 		M.state.latest_diagnostics = diagnostics
 		local diagnostics_by_bufnr = {}
 		for _, value in ipairs(diagnostics) do

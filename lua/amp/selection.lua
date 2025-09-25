@@ -215,7 +215,7 @@ function M.has_selection_changed(new_selection)
 end
 
 ---Update and broadcast current selection
-function M.update_and_broadcast()
+function M.update_and_broadcast(force)
 	if not M.state.tracking_enabled or not M.server then
 		return
 	end
@@ -225,7 +225,7 @@ function M.update_and_broadcast()
 		return
 	end
 
-	if M.has_selection_changed(current_selection) then
+	if force or M.has_selection_changed(current_selection) then
 		M.state.latest_selection = current_selection
 
 		local ide_notification = M.to_ide_format(current_selection)
