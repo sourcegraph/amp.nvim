@@ -54,7 +54,7 @@ function M.start(auth_token)
 
 			-- Send initial state to newly connected client
 			vim.defer_fn(function()
-				M._send_initial_state(client)
+				M._send_state()
 			end, 50)
 		end,
 		on_disconnect = function(client, code, reason)
@@ -364,11 +364,8 @@ function M.get_status()
 	}
 end
 
----Send initial state to a newly connected client
----@param client table The client that just connected
-function M._send_initial_state(client)
-	logger.debug("server", "Sending initial state to client:", client.id)
-
+---Send current state to clients
+function M._send_state()
 	-- Force broadcast current state - the client will receive it since they just connected
 	local visible_files = require("amp.visible_files")
 	visible_files.broadcast_visible_files(true)
