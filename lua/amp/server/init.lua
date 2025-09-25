@@ -92,7 +92,7 @@ function M.start(auth_token)
 			end, 50)
 		end,
 		on_disconnect = function(client, code, reason)
-			M.state.clients[client.id] = nil
+			table.remove(M.state.clients, client.id)
 			logger.debug(
 				"server",
 				"IDE client disconnected:",
@@ -108,7 +108,7 @@ function M.start(auth_token)
 		end,
 		on_error = function(error_msg)
 			logger.error("server", "IDE server error:", error_msg)
-			
+
 			-- Emit server error event
 			M._emit("server_error", error_msg)
 		end,

@@ -27,12 +27,6 @@ M.state = {
 	initialized = false,
 }
 
----Check if connected to Amp
----@return boolean connected True if at least one client is connected
-function M.is_connected()
-	return M.state.connected
-end
-
 ---Handle client connection event
 function M._on_client_connect()
 	local was_connected = M.state.connected

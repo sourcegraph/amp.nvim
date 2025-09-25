@@ -49,7 +49,14 @@ function M.check()
 		vim.health.ok("Amp CLI found at " .. amp_path)
 
 		-- Try to get version
-		local version_output = vim.fn.system("amp --version 2>/dev/null")
+		local version_cmd
+		if vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1 then
+			version_cmd = "amp --version 2>nul"
+		else
+			version_cmd = "amp --version 2>/dev/null"
+		end
+		
+		local version_output = vim.fn.system(version_cmd)
 		if vim.v.shell_error == 0 and version_output ~= "" then
 			local version = version_output:gsub("%s+", "")
 			vim.health.ok("Amp CLI version: " .. version)
