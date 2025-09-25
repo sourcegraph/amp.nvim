@@ -10,7 +10,7 @@ function M.check()
 	if amp.state.initialized then
 		vim.health.ok("Plugin is initialized")
 	else
-		vim.health.error("Plugin is not initialized - run require('amp').setup()")
+		vim.health.error("Plugin is not initialized - run :AmpStart")
 		return
 	end
 
