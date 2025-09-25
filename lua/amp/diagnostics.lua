@@ -96,15 +96,21 @@ function M._vim_diagnostic_to_jetbrains(diagnostic)
 	}
 end
 
-function M.broadcast_diagnostics()
+---Send current diagnostics to a specific client or broadcast to all
+---@param client table|nil The client to send to, or nil to broadcast to all
+---@param force boolean|nil Force sending even if diagnostics haven't changed
+function M.send_diagnostics(client, force)
 	if not M.state.diagnostics_enabled or not M.server then
 		return
 	end
 
 	local diagnostics = vim.diagnostic.get(nil)
 
-	if M.have_diagnostics_changed(diagnostics) then
-		M.state.latest_diagnostics = diagnostics
+	if force or M.have_diagnostics_changed(diagnostics) then
+		if not force then
+			M.state.latest_diagnostics = diagnostics
+		end
+
 		local diagnostics_by_bufnr = {}
 		for _, value in ipairs(diagnostics) do
 			if not diagnostics_by_bufnr[value.bufnr] then
@@ -113,17 +119,28 @@ function M.broadcast_diagnostics()
 			table.insert(diagnostics_by_bufnr[value.bufnr], M._vim_diagnostic_to_jetbrains(value))
 		end
 
-		for idiagnostic, diagnostic in pairs(diagnostics_by_bufnr) do
-			local name = "file://" .. vim.api.nvim_buf_get_name(idiagnostic)
+		for bufnr, buffer_diagnostics in pairs(diagnostics_by_bufnr) do
+			local name = "file://" .. vim.api.nvim_buf_get_name(bufnr)
 			local diagnostics_message = {
 				diagnosticsDidChange = {
 					uri = name,
-					diagnostics = diagnostic,
+					diagnostics = buffer_diagnostics,
 				},
 			}
-			M.server.broadcast_ide(diagnostics_message)
+
+			if client then
+				-- Send to specific client
+				M.server.send_ide(client, { serverNotification = diagnostics_message })
+			else
+				-- Broadcast to all clients
+				M.server.broadcast_ide(diagnostics_message)
+			end
 		end
 	end
+end
+
+function M.broadcast_diagnostics()
+	M.send_diagnostics(nil, false)
 end
 
 ---Create autocommands for diagnostics tracking

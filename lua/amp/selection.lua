@@ -214,8 +214,10 @@ function M.has_selection_changed(new_selection)
 	return false
 end
 
----Update and broadcast current selection
-function M.update_and_broadcast()
+---Send current selection to a specific client or broadcast to all
+---@param client table|nil The client to send to, or nil to broadcast to all
+---@param force boolean|nil Force sending even if selection hasn't changed
+function M.send_selection(client, force)
 	if not M.state.tracking_enabled or not M.server then
 		return
 	end
@@ -225,22 +227,39 @@ function M.update_and_broadcast()
 		return
 	end
 
-	if M.has_selection_changed(current_selection) then
-		M.state.latest_selection = current_selection
+	if force or M.has_selection_changed(current_selection) then
+		if not force then
+			M.state.latest_selection = current_selection
+		end
 
 		local ide_notification = M.to_ide_format(current_selection)
-		M.server.broadcast_ide({ selectionDidChange = ide_notification })
+		local message = { selectionDidChange = ide_notification }
 
-		logger.debug(
-			"selection",
-			"Selection changed:",
-			ide_notification.uri,
-			"lines",
-			ide_notification.selections[1].range.startLine + 1,
-			"-",
-			ide_notification.selections[1].range.endLine + 1
-		)
+		if client then
+			-- Send to specific client
+			M.server.send_ide(client, { serverNotification = message })
+		else
+			-- Broadcast to all clients
+			M.server.broadcast_ide(message)
+		end
+
+		if not force then
+			logger.debug(
+				"selection",
+				"Selection changed:",
+				ide_notification.uri,
+				"lines",
+				ide_notification.selections[1].range.startLine + 1,
+				"-",
+				ide_notification.selections[1].range.endLine + 1
+			)
+		end
 	end
+end
+
+---Update and broadcast current selection
+function M.update_and_broadcast()
+	M.send_selection(nil, false)
 end
 
 ---Debounced update function

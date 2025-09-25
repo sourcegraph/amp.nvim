@@ -51,6 +51,11 @@ function M.start(auth_token)
 			else
 				logger.debug("server", "IDE client connected (no auth):", client.id)
 			end
+
+			-- Send initial state to newly connected client
+			vim.defer_fn(function()
+				M._send_initial_state(client)
+			end, 50)
 		end,
 		on_disconnect = function(client, code, reason)
 			M.state.clients[client.id] = nil
@@ -357,6 +362,24 @@ function M.get_status()
 		client_count = tcp_server.get_client_count(M.state.server),
 		clients = tcp_server.get_clients_info(M.state.server),
 	}
+end
+
+---Send initial state to a newly connected client
+---@param client table The client that just connected
+function M._send_initial_state(client)
+	logger.debug("server", "Sending initial state to client:", client.id)
+
+	-- Send current visible files
+	local visible_files = require("amp.visible_files")
+	visible_files.send_visible_files(client, true)
+
+	-- Send current selection
+	local selection = require("amp.selection")
+	selection.send_selection(client, true)
+
+	-- Send current diagnostics
+	local diagnostics = require("amp.diagnostics")
+	diagnostics.send_diagnostics(client, true)
 end
 
 return M
