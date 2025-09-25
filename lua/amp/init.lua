@@ -23,8 +23,36 @@ M.state = {
 	server = nil,
 	port = nil,
 	auth_token = nil,
+	connected = false,
 	initialized = false,
 }
+
+---Check if connected to Amp
+---@return boolean connected True if at least one client is connected
+function M.is_connected()
+	return M.state.connected
+end
+
+---Handle client connection event
+function M._on_client_connect()
+	local was_connected = M.state.connected
+	M.state.connected = true
+
+	if not was_connected then
+		logger.info("init", "Connected to Amp")
+	end
+end
+
+---Handle client disconnection event
+function M._on_client_disconnect()
+	local was_connected = M.state.connected
+	local server_status = require("amp.server.init").get_status()
+	M.state.connected = server_status.client_count > 0
+
+	if was_connected and not M.state.connected then
+		logger.info("init", "Disconnected from Amp (no clients)")
+	end
+end
 
 ---Setup the plugin with user configuration
 ---@param opts table|nil Optional configuration
@@ -90,6 +118,10 @@ function M.start()
 	M.state.port = tonumber(result)
 	M.state.auth_token = auth_token
 
+	-- Register event listeners
+	server.on("client_connect", M._on_client_connect)
+	server.on("client_disconnect", M._on_client_disconnect)
+
 	-- Enable IDE protocol features
 	M._enable_ide_features(server)
 
@@ -100,6 +132,7 @@ function M.start()
 		M.state.server = nil
 		M.state.port = nil
 		M.state.auth_token = nil
+		M.state.connected = false
 
 		local error_msg = "Failed to create lock file: " .. (lock_result or "unknown error")
 		logger.error("init", error_msg)
@@ -134,6 +167,7 @@ function M.stop()
 	M.state.server = nil
 	M.state.port = nil
 	M.state.auth_token = nil
+	M.state.connected = false
 
 	logger.info("init", "Server stopped")
 	return true
@@ -190,7 +224,8 @@ function M._create_commands()
 
 	vim.api.nvim_create_user_command("AmpStatus", function()
 		if M.state.server and M.state.port then
-			logger.info("command", "Server is running on port " .. tostring(M.state.port))
+			local connection_status = M.state.connected and "connected" or "waiting for clients"
+			logger.info("command", "Server is running on port " .. tostring(M.state.port) .. " (" .. connection_status .. ")")
 
 			-- Show current visible files and selection for debugging
 			local visible_files = require("amp.visible_files")
