@@ -96,10 +96,8 @@ function M.have_files_changed(new_files)
 	return false
 end
 
----Send current visible files to a specific client or broadcast to all
----@param client table|nil The client to send to, or nil to broadcast to all
----@param force boolean|nil Force sending even if files haven't changed
-function M.send_visible_files(client, force)
+---Broadcast visible files if changed
+function M.broadcast_visible_files(force)
 	if not M.state.tracking_enabled or not M.server then
 		return
 	end
@@ -107,40 +105,23 @@ function M.send_visible_files(client, force)
 	local current_files = M.get_current_visible_files()
 
 	if force or M.have_files_changed(current_files) then
-		if not force then
-			M.state.latest_files = current_files
-		end
+		M.state.latest_files = current_files
 
-		local message = {
+		M.server.broadcast_ide({
 			visibleFilesDidChange = { uris = current_files },
-		}
+		})
 
-		if client then
-			-- Send to specific client
-			M.server.send_ide(client, { serverNotification = message })
-		else
-			-- Broadcast to all clients
-			M.server.broadcast_ide(message)
-		end
-
-		if not force then
-			logger.debug("visible_files", "Visible files changed, count:", #current_files)
-			for i, uri in ipairs(current_files) do
-				if i <= 3 then -- Log first 3 files
-					local filename = uri:match("file://.*/(.*)")
-					logger.debug("visible_files", "  " .. i .. ":", filename or uri)
-				elseif i == 4 and #current_files > 3 then
-					logger.debug("visible_files", "  ... and", #current_files - 3, "more files")
-					break
-				end
+		logger.debug("visible_files", "Visible files changed, count:", #current_files)
+		for i, uri in ipairs(current_files) do
+			if i <= 3 then -- Log first 3 files
+				local filename = uri:match("file://.*/(.*)")
+				logger.debug("visible_files", "  " .. i .. ":", filename or uri)
+			elseif i == 4 and #current_files > 3 then
+				logger.debug("visible_files", "  ... and", #current_files - 3, "more files")
+				break
 			end
 		end
 	end
-end
-
----Broadcast visible files if changed
-function M.broadcast_visible_files()
-	M.send_visible_files(nil, false)
 end
 
 ---Create autocommands for visible files tracking

@@ -369,17 +369,15 @@ end
 function M._send_initial_state(client)
 	logger.debug("server", "Sending initial state to client:", client.id)
 
-	-- Send current visible files
+	-- Force broadcast current state - the client will receive it since they just connected
 	local visible_files = require("amp.visible_files")
-	visible_files.send_visible_files(client, true)
+	visible_files.broadcast_visible_files(true)
 
-	-- Send current selection
 	local selection = require("amp.selection")
-	selection.send_selection(client, true)
+	selection.update_and_broadcast(true)
 
-	-- Send current diagnostics
 	local diagnostics = require("amp.diagnostics")
-	diagnostics.send_diagnostics(client, true)
+	diagnostics.broadcast_diagnostics(true)
 end
 
 return M
