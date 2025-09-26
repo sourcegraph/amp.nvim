@@ -22,6 +22,9 @@ Install the plugin by adding this code to your lazy.vim config:
 
 Once installed, run `amp --ide`.
 
+> [!TIP]
+> Check the health of the plugin by running `:checkhealth amp` or to run all healthchecks run `:checkhealth`
+
 ## Development
 
 Uses `stylua` for general formatting, and `lua-language-server` for linting.
