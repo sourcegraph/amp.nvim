@@ -27,4 +27,27 @@ function M.send_message(message)
 	return success
 end
 
+---Send a message to append to the prompt field in the IDE
+---@param message string The message to append to the prompt
+---@return boolean success Whether message was sent successfully
+function M.send_to_prompt(message)
+	local amp = require("amp")
+	if not amp.state.server then
+		logger.warn("message", "Server is not running - start it first with :AmpStart")
+		return false
+	end
+
+	local success = amp.state.server.broadcast_ide({
+		appendToPrompt = { message = message },
+	})
+
+	if success then
+		logger.debug("message", "Message appended to prompt")
+	else
+		logger.error("message", "Failed to append message to prompt")
+	end
+
+	return success
+end
+
 return M
