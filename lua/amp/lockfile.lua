@@ -1,28 +1,16 @@
 local M = {}
 
--- Generate a cryptographically secure random authentication token
+-- Generate a random authentication token
 function M.generate_auth_token()
 	local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	local token = {}
-	local uv = vim.loop
 
-	-- Read 32 bytes from /dev/urandom for cryptographic randomness
-	local urandom_fd = uv.fs_open("/dev/urandom", "r", 438)
-	if not urandom_fd then
-		error("Cannot open /dev/urandom for secure token generation")
-	end
+	-- Use time and process ID for seeding
+	math.randomseed(os.time() + vim.fn.getpid())
 
-	local raw = uv.fs_read(urandom_fd, 32, 0)
-	uv.fs_close(urandom_fd)
-
-	if not raw then
-		error("Cannot read from /dev/urandom")
-	end
-
-	-- Convert random bytes to token characters
+	-- Generate 32 character token
 	for i = 1, 32 do
-		local byte = raw:byte(i)
-		local char_index = (byte % #chars) + 1
+		local char_index = math.random(1, #chars)
 		table.insert(token, chars:sub(char_index, char_index))
 	end
 
