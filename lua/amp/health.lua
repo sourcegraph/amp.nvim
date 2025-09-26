@@ -4,7 +4,7 @@ local M = {}
 function M.check()
 	local amp = require("amp")
 
-	vim.health.start("@sourcegraph/amp.nvim")
+	vim.health.start("amp.nvim")
 
 	-- Check if plugin is initialized
 	if amp.state.initialized then
@@ -55,7 +55,7 @@ function M.check()
 		else
 			version_cmd = "amp --version 2>/dev/null"
 		end
-		
+
 		local version_output = vim.fn.system(version_cmd)
 		if vim.v.shell_error == 0 and version_output ~= "" then
 			local version = version_output:gsub("%s+", "")
