@@ -1,25 +1,11 @@
 local M = {}
 
--- Simple path join that handles platform separators
-local function joinpath(...)
-	local sep = package.config:sub(1, 1)
-	local parts = { ... }
-	-- Trim any trailing/leading separators to avoid double separators
-	for i, p in ipairs(parts) do
-		-- Normalize separators to OS-specific sep
-		p = tostring(p)
-		p = p:gsub("[/\\]", sep)
-		if i > 1 then
-			p = p:gsub("^" .. sep .. "+", "")
-		end
-		if i < #parts then
-			p = p:gsub(sep .. "+$", "")
-		end
-		parts[i] = p
-	end
-	return table.concat(parts, sep)
-end
 
+
+-- Get the user's home directory. The fallback handles edge cases where
+-- vim.loop.os_homedir() returns nil (missing HOME/USERPROFILE env vars,
+-- broken containers, permission issues), but this is unlikely without
+-- bigger system problems.
 local function homedir()
 	return vim.loop.os_homedir() or vim.fn.expand("~")
 end
@@ -33,7 +19,7 @@ local function get_data_home()
 	end
 
 	local sys = vim.loop.os_uname().sysname
-	local standard_dir = joinpath(homedir(), ".local", "share")
+	local standard_dir = vim.fs.joinpath(homedir(), ".local", "share")
 	
 	-- Match ../amp/core/src/common/dirs.ts logic:
 	-- On Windows/macOS: use standard dir (~/.local/share)
@@ -51,7 +37,7 @@ local function get_data_home()
 end
 
 local function lock_dir_base()
-	return joinpath(get_data_home(), "amp", "ide")
+	return vim.fs.joinpath(get_data_home(), "amp", "ide")
 end
 
 -- Generate a random authentication token
@@ -74,7 +60,7 @@ end
 -- Create a lock file with port and auth token
 function M.create(port, auth_token)
 	local lock_dir = lock_dir_base()
-	local lockfile_path = joinpath(lock_dir, tostring(port) .. ".json")
+	local lockfile_path = vim.fs.joinpath(lock_dir, tostring(port) .. ".json")
 
 	-- Create directory structure if it doesn't exist
 	local mkdir_success = vim.fn.mkdir(lock_dir, "p")
@@ -113,7 +99,7 @@ function M.remove(port)
 		return false, "No port specified"
 	end
 
-	local lockfile_path = joinpath(lock_dir_base(), tostring(port) .. ".json")
+	local lockfile_path = vim.fs.joinpath(lock_dir_base(), tostring(port) .. ".json")
 	local success = os.remove(lockfile_path)
 
 	return success ~= nil, success and "Lock file removed" or "Could not remove lock file"
