@@ -40,8 +40,7 @@ nvim --headless --clean -c ':!lua-language-server --check .' -c 'qa'
 - Notify Amp about selected code
 - Notify Amp about Neovim diagnostics
 - Send messages to the Amp agent
-- Read and edit files through the Nvim buffer (while also writing to disk)
-  - We talked about changing this to writing to disk by default, and then telling nvim to reload. That may however cause issues with fresh buffers that have no file yet. Let us know what you think!
+- Read and edit files through the Nvim buffer
 
 ## Sending Messages to Amp
 
@@ -115,6 +114,8 @@ end, {
 ```
 
 ## Feature Ideas
+
+Do you have a feature request or an idea? Submit an issue in this repo!
 
 - Better reconnect: Nvim users are much more likely to reopen their IDE than JetBrains users. Because of that, we should check if we can automatically reconnect to an IDE in the same path that we had the last connection with.
 - When I ask Amp to show me a particular section of code, it would be nice if Amp could open that file and select the code for me.
