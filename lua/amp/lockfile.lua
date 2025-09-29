@@ -10,7 +10,7 @@ local function homedir()
 	return vim.loop.os_homedir() or vim.fn.expand("~")
 end
 
--- Resolve the base data directory following ../amp repository pattern
+-- Resolve the base data directory following amp repository pattern
 local function get_data_home()
 	-- Optional override for testing/debugging
 	local override = os.getenv("AMP_DATA_HOME")
@@ -21,7 +21,7 @@ local function get_data_home()
 	local sys = vim.loop.os_uname().sysname
 	local standard_dir = vim.fs.joinpath(homedir(), ".local", "share")
 	
-	-- Match ../amp/core/src/common/dirs.ts logic:
+	-- Match amp repository core/src/common/dirs.ts logic:
 	-- On Windows/macOS: use standard dir (~/.local/share)
 	-- On Linux: use XDG_DATA_HOME if set, otherwise standard dir
 	if sys == "Windows_NT" or sys == "Darwin" then
