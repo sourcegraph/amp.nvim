@@ -1,5 +1,59 @@
 local M = {}
 
+-- Simple path join that handles platform separators
+local function joinpath(...)
+	local sep = package.config:sub(1, 1)
+	local parts = { ... }
+	-- Trim any trailing/leading separators to avoid double separators
+	for i, p in ipairs(parts) do
+		-- Normalize separators to OS-specific sep
+		p = tostring(p)
+		p = p:gsub("[/\\]", sep)
+		if i > 1 then
+			p = p:gsub("^" .. sep .. "+", "")
+		end
+		if i < #parts then
+			p = p:gsub(sep .. "+$", "")
+		end
+		parts[i] = p
+	end
+	return table.concat(parts, sep)
+end
+
+local function homedir()
+	return vim.loop.os_homedir() or vim.fn.expand("~")
+end
+
+-- Resolve the base data directory following ../amp repository pattern
+local function get_data_home()
+	-- Optional override for testing/debugging
+	local override = os.getenv("AMP_DATA_HOME")
+	if override and override ~= "" then
+		return override
+	end
+
+	local sys = vim.loop.os_uname().sysname
+	local standard_dir = joinpath(homedir(), ".local", "share")
+	
+	-- Match ../amp/core/src/common/dirs.ts logic:
+	-- On Windows/macOS: use standard dir (~/.local/share)
+	-- On Linux: use XDG_DATA_HOME if set, otherwise standard dir
+	if sys == "Windows_NT" or sys == "Darwin" then
+		return standard_dir
+	else
+		-- Linux/Unix: respect XDG if provided, fallback to standard dir
+		local xdg = os.getenv("XDG_DATA_HOME")
+		if xdg and xdg ~= "" then
+			return xdg
+		end
+		return standard_dir
+	end
+end
+
+local function lock_dir_base()
+	return joinpath(get_data_home(), "amp", "ide")
+end
+
 -- Generate a random authentication token
 function M.generate_auth_token()
 	local chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -19,10 +73,8 @@ end
 
 -- Create a lock file with port and auth token
 function M.create(port, auth_token)
-	-- Properly expand home directory
-	local home = vim.fn.expand("~")
-	local lock_dir = home .. "/.local/share/amp/ide"
-	local lockfile_path = lock_dir .. "/" .. tostring(port) .. ".json"
+	local lock_dir = lock_dir_base()
+	local lockfile_path = joinpath(lock_dir, tostring(port) .. ".json")
 
 	-- Create directory structure if it doesn't exist
 	local mkdir_success = vim.fn.mkdir(lock_dir, "p")
@@ -61,9 +113,7 @@ function M.remove(port)
 		return false, "No port specified"
 	end
 
-	-- Properly expand home directory
-	local home = vim.fn.expand("~")
-	local lockfile_path = home .. "/.local/share/amp/ide/" .. tostring(port) .. ".json"
+	local lockfile_path = joinpath(lock_dir_base(), tostring(port) .. ".json")
 	local success = os.remove(lockfile_path)
 
 	return success ~= nil, success and "Lock file removed" or "Could not remove lock file"
