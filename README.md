@@ -121,12 +121,11 @@ Do you have a feature request or an idea? Submit an issue in this repo!
 - When I ask Amp to show me a particular section of code, it would be nice if Amp could open that file and select the code for me.
 - Should we keep the code selection when moving between tab? Currently you can't switch to a split terminal if you don't want to loose the selection, i.e. making the built in terminal unfeasible for code selection.
 
-## Running on Linux
+## Cross-Platform Support
 
-The directory for lockfiles is currently hard-coded to a mac variant. Let us know if you run into problems on Linux with that.
+The plugin uses the same lockfile directory pattern as the main Amp repository:
 
-```lua
-  local home = vim.fn.expand("~")
-  local lock_dir = home .. "/.local/share/amp/ide"
-  local lockfile_path = lock_dir .. "/" .. tostring(port) .. ".json"
-```
+- **Windows & macOS**: `~/.local/share/amp/ide`
+- **Linux**: `$XDG_DATA_HOME/amp/ide` or `~/.local/share/amp/ide`
+
+You can override the data directory by setting the `AMP_DATA_HOME` environment variable for testing or custom setups.
