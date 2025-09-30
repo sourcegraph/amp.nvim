@@ -2,9 +2,15 @@
 
 This plugin allows the [Amp CLI](https://ampcode.com/manual#cli) to see the file you currently have open in your Neovim instance, along with your cursor position and your text selection.
 
-
 https://github.com/user-attachments/assets/3a5f136f-7b0a-445f-90be-b4e5b28a7e82
 
+When installed, this plugin allows Neovim to:
+
+- Notify Amp about currently open file
+- Notify Amp about selected code
+- Notify Amp about Neovim diagnostics
+- Send messages to the Amp agent (see [Sending Messages to Amp](#sending-messages-to-amp))
+- Read and edit files through the Neovim buffers
 
 ## Installation
 
@@ -22,25 +28,8 @@ Install the plugin by adding this code to your lazy.vim config:
 
 Once installed, run `amp --ide`.
 
-> [!TIP]
+### Healthcheck
 > Check the health of the plugin by running `:checkhealth amp` or to run all healthchecks run `:checkhealth`
-
-## Development
-
-Uses `stylua` for general formatting, and `lua-language-server` for linting.
-
-```bash
-stylua .
-nvim --headless --clean -c ':!lua-language-server --check .' -c 'qa'
-```
-
-## Features
-
-- Notify Amp about currently open file (you need to select a file, there's currently no initial sync)
-- Notify Amp about selected code
-- Notify Amp about Neovim diagnostics
-- Send messages to the Amp agent
-- Read and edit files through the Nvim buffer
 
 ## Sending Messages to Amp
 
@@ -120,6 +109,15 @@ Do you have a feature request or an idea? Submit an issue in this repo!
 - Better reconnect: Nvim users are much more likely to reopen their IDE than JetBrains users. Because of that, we should check if we can automatically reconnect to an IDE in the same path that we had the last connection with.
 - When I ask Amp to show me a particular section of code, it would be nice if Amp could open that file and select the code for me.
 - Should we keep the code selection when moving between tab? Currently you can't switch to a split terminal if you don't want to loose the selection, i.e. making the built in terminal unfeasible for code selection.
+
+## Development
+
+Uses `stylua` for general formatting, and `lua-language-server` for linting.
+
+```bash
+stylua .
+nvim --headless --clean -c ':!lua-language-server --check .' -c 'qa'
+```
 
 ## Cross-Platform Support
 
