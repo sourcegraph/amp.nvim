@@ -158,3 +158,7 @@ The plugin uses the same lockfile directory pattern as the main Amp repository:
 - **Linux**: `$XDG_DATA_HOME/amp/ide` or `~/.local/share/amp/ide`
 
 You can override the data directory by setting the `AMP_DATA_HOME` environment variable for testing or custom setups.
+
+## Contributing
+
+Contributors should follow the [Sourcegraph Community Code of Conduct](https://sourcegraph.notion.site/Sourcegraph-Community-Code-of-Conduct-c7cef6b270c84fb2882808d4d82995dd).
