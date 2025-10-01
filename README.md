@@ -14,6 +14,8 @@ When installed, this plugin allows Neovim to:
 
 ## Installation
 
+### Using lazy.nvim
+
 Install the plugin by adding this code to your lazy.vim config:
 
 ```lua
@@ -24,6 +26,35 @@ Install the plugin by adding this code to your lazy.vim config:
   lazy = false,
   opts = { auto_start = true, log_level = "info" },
 }
+```
+
+### Using mini.deps
+
+```lua
+local MiniDeps = require('mini.deps')
+MiniDeps.add({
+  source = 'sourcegraph/amp.nvim',
+})
+
+require('amp').setup({ auto_start = true, log_level = "info" })
+```
+
+### Using Neovim's Native Package System
+
+```bash
+# For automatic loading on startup
+git clone https://github.com/sourcegraph/amp.nvim.git \
+  ~/.local/share/nvim/site/pack/plugins/start/amp.nvim
+
+# Or for optional loading (use :packadd amp.nvim to load)
+git clone https://github.com/sourcegraph/amp.nvim.git \
+  ~/.local/share/nvim/site/pack/plugins/opt/amp.nvim
+```
+
+Then add to your `init.lua`:
+
+```lua
+require('amp').setup({ auto_start = true, log_level = "info" })
 ```
 
 Once installed, run `amp --ide`.
