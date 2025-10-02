@@ -162,7 +162,11 @@ function M._remove_client(server, client)
 		server.clients[client.id] = nil
 
 		if not client.tcp_handle:is_closing() then
+			client.state = "closing"
 			client.tcp_handle:close()
+			-- Note: close() is async in libuv, but we mark as "closed" immediately
+			-- since the client is removed from the active list and won't be used again
+			client.state = "closed"
 		end
 	end
 end
@@ -264,10 +268,10 @@ function M.start_ping_timer(server, interval)
 				if client_manager.is_client_alive(client, interval * 2) then
 					client_manager.send_ping(client, "ping")
 				else
-					-- Client appears dead, close it
-					server.on_error("Client " .. client.id .. " appears dead, closing")
-					client_manager.close_client(client, 1006, "Connection timeout")
+					-- Client appears dead, drop the connection (no Close frame for 1006)
+					server.on_error(("Client %s appears dead, closing"):format(client.id))
 					M._remove_client(server, client)
+					server.on_disconnect(client, 1006, "Connection timeout")
 				end
 			end
 		end
