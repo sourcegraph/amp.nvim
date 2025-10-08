@@ -1,7 +1,6 @@
 ---@brief Message sending functionality for Amp Neovim plugin
 ---@module 'amp.message'
 local M = {}
-
 local logger = require("amp.logger")
 
 ---Send a message to the agent using userSentMessage notification

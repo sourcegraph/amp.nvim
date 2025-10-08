@@ -3,7 +3,6 @@
 local M = {}
 
 ---@alias DiagnosticSeverity "error" | "warning" | "info" | "hint"
-
 ---@param severity vim.diagnostic.Severity
 ---@return DiagnosticSeverity
 function M._vim_severity_to_protocol(severity)
@@ -16,6 +15,7 @@ function M._vim_severity_to_protocol(severity)
 	elseif severity == vim.diagnostic.severity.HINT then
 		return "hint"
 	end
+	return "info" -- fallback
 end
 
 ---@class Range
