@@ -208,25 +208,38 @@ end
 ---@param code number|nil Close code (default: 1000)
 ---@param reason string|nil Close reason
 function M.close_client(client, code, reason)
-	if client.state == "closed" or client.state == "closing" then
+	-- Already closing/closed? Bail early.
+	if client.state == "closed" or client.tcp_handle:is_closing() then
 		return
 	end
 
 	code = code or 1000
 	reason = reason or ""
 
-	if client.handshake_complete then
+	client.state = "closing"
+
+	-- If handshake complete and code is allowed to be sent, send a Close frame
+	-- Per RFC 6455, code 1006 MUST NOT be sent in a Close frame
+	local can_send_close = client.handshake_complete and code ~= 1006
+
+	if can_send_close then
 		local close_frame = frame.create_close_frame(code, reason)
-		client.tcp_handle:write(close_frame, function()
-			client.state = "closed"
-			client.tcp_handle:close()
+		client.tcp_handle:write(close_frame, function(err)
+			-- Regardless of write result, ensure handle is closed exactly once
+			if not client.tcp_handle:is_closing() then
+				client.tcp_handle:close(function()
+					client.state = "closed"
+				end)
+			end
 		end)
 	else
-		client.state = "closed"
-		client.tcp_handle:close()
+		-- For abnormal closure (1006) or no handshake, just drop TCP immediately
+		if not client.tcp_handle:is_closing() then
+			client.tcp_handle:close(function()
+				client.state = "closed"
+			end)
+		end
 	end
-
-	client.state = "closing"
 end
 
 ---Check if a client connection is alive

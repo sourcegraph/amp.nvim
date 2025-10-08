@@ -33,7 +33,8 @@ function M._on_client_connect()
 	M.state.connected = true
 
 	if not was_connected then
-		logger.info("init", "Connected to Amp")
+		-- Use print() directly to avoid [INFO] init: prefix from logger
+		print("● Connected to Amp CLI")
 	end
 end
 
