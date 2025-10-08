@@ -351,7 +351,7 @@ function M._handle_message(client, message)
 
 		if not path then
 			local error_response = ide.wrap_error(id, {
-				code = -32602,
+				code = -32602, -- JSON-RPC 2.0: Invalid params
 				message = "Invalid params",
 				data = "getDiagnostics requires path parameter",
 			})

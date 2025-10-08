@@ -178,8 +178,6 @@ function M._enable_ide_features(server)
 	local visible_files = require("amp.visible_files")
 	visible_files.enable(server)
 
-	-- Diagnostics are pull-based via getDiagnostics requests (no setup needed)
-
 	-- Send initial plugin metadata
 	vim.defer_fn(function()
 		server.broadcast_ide({

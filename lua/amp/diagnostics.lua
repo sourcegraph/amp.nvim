@@ -2,22 +2,20 @@
 ---@module 'amp.diagnostics'
 local M = {}
 
----@alias DiagnosticSeverity "ERROR" | "WARNING" | "WEAK_WARNING" | "INFO"
+---@alias DiagnosticSeverity "error" | "warning" | "info" | "hint"
 
 ---@param severity vim.diagnostic.Severity
 ---@return DiagnosticSeverity
 function M._vim_severity_to_protocol(severity)
 	if severity == vim.diagnostic.severity.ERROR then
-		return "ERROR"
+		return "error"
 	elseif severity == vim.diagnostic.severity.WARN then
-		return "WARNING"
+		return "warning"
 	elseif severity == vim.diagnostic.severity.INFO then
-		return "INFO"
+		return "info"
 	elseif severity == vim.diagnostic.severity.HINT then
-		return "WEAK_WARNING"
+		return "hint"
 	end
-
-	error("unknown severity level: " .. severity)
 end
 
 ---@class Range
