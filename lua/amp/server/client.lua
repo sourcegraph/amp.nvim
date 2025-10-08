@@ -227,16 +227,18 @@ function M.close_client(client, code, reason)
 		client.tcp_handle:write(close_frame, function(err)
 			-- Regardless of write result, ensure handle is closed exactly once
 			if not client.tcp_handle:is_closing() then
-				client.tcp_handle:close()
+				client.tcp_handle:close(function()
+					client.state = "closed"
+				end)
 			end
-			client.state = "closed"
 		end)
 	else
 		-- For abnormal closure (1006) or no handshake, just drop TCP immediately
 		if not client.tcp_handle:is_closing() then
-			client.tcp_handle:close()
+			client.tcp_handle:close(function()
+				client.state = "closed"
+			end)
 		end
-		client.state = "closed"
 	end
 end
 
