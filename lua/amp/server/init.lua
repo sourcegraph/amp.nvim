@@ -210,9 +210,9 @@ function M._handle_message(client, message)
 
 	-- Handle readFile request
 	if request.readFile then
-		local path = request.readFile.path
+		local requested_path = request.readFile.path
 
-		if not path then
+		if not requested_path then
 			local error_response = ide.wrap_error(id, {
 				code = -32602,
 				message = "Invalid params",
@@ -222,10 +222,22 @@ function M._handle_message(client, message)
 			return
 		end
 
-		-- Use async file reading with vim.loop
-		local uv = vim.loop
+		-- Read file contents, preferring buffer data (with unsaved changes) over disk
 		local success, content = pcall(function()
-			local fd = uv.fs_open(path, "r", 438) -- 438 = 0666 in decimal
+			-- Normalize path to absolute path
+			local full_path = vim.fn.fnamemodify(requested_path, ":p")
+
+			-- First check if file is open in a buffer
+			local bufnr = vim.fn.bufnr(full_path)
+			if bufnr ~= -1 and vim.api.nvim_buf_is_loaded(bufnr) then
+				-- Return buffer contents (including unsaved changes)
+				local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+				return table.concat(lines, "\n")
+			end
+
+			-- Fall back to reading from disk
+			local uv = vim.loop
+			local fd = uv.fs_open(full_path, "r", 438) -- 438 = 0666 in decimal
 			if not fd then
 				error("File not found or cannot be opened")
 			end
