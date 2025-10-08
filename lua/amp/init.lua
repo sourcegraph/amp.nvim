@@ -217,7 +217,10 @@ function M._create_commands()
 	vim.api.nvim_create_user_command("AmpStatus", function()
 		if M.state.server and M.state.port then
 			local connection_status = M.state.connected and "connected" or "waiting for clients"
-			logger.info("command", "Server is running on port " .. tostring(M.state.port) .. " (" .. connection_status .. ")")
+			logger.info(
+				"command",
+				"Server is running on port " .. tostring(M.state.port) .. " (" .. connection_status .. ")"
+			)
 
 			-- Show current visible files and selection for debugging
 			local visible_files = require("amp.visible_files")

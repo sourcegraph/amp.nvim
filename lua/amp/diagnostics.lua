@@ -76,7 +76,7 @@ function M.get_diagnostics(path)
 		local abs_path = vim.fn.fnamemodify(path, ":p")
 		local uri = "file://" .. abs_path
 		local bufnr = vim.fn.bufnr("^" .. abs_path .. "$")
-		
+
 		local diagnostics = {}
 		if bufnr ~= -1 then
 			local raw_diagnostics = vim.diagnostic.get(bufnr)

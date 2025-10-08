@@ -1,7 +1,5 @@
 local M = {}
 
-
-
 -- Get the user's home directory. The fallback handles edge cases where
 -- vim.loop.os_homedir() returns nil (missing HOME/USERPROFILE env vars,
 -- broken containers, permission issues), but this is unlikely without
@@ -20,7 +18,7 @@ local function get_data_home()
 
 	local sys = vim.loop.os_uname().sysname
 	local standard_dir = vim.fs.joinpath(homedir(), ".local", "share")
-	
+
 	-- Match amp repository core/src/common/dirs.ts logic:
 	-- On Windows/macOS: use standard dir (~/.local/share)
 	-- On Linux: use XDG_DATA_HOME if set, otherwise standard dir
