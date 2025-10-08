@@ -345,6 +345,32 @@ function M._handle_message(client, message)
 		return
 	end
 
+	-- Handle getDiagnostics request
+	if request.getDiagnostics then
+		local path = request.getDiagnostics.path
+
+		if not path then
+			local error_response = ide.wrap_error(id, {
+				code = -32602,
+				message = "Invalid params",
+				data = "getDiagnostics requires path parameter",
+			})
+			M.send_ide(client, error_response)
+			return
+		end
+
+		local diagnostics = require("amp.diagnostics")
+		local entries = diagnostics.get_diagnostics(path)
+
+		local response = ide.wrap_response(id, {
+			getDiagnostics = {
+				entries = entries,
+			},
+		})
+		M.send_ide(client, response)
+		return
+	end
+
 	-- Unknown request
 	local error_response = ide.wrap_error(id, {
 		code = -32601,
@@ -413,9 +439,6 @@ function M._send_state()
 
 	local selection = require("amp.selection")
 	selection.update_and_broadcast(true)
-
-	local diagnostics = require("amp.diagnostics")
-	diagnostics.broadcast_diagnostics(true)
 end
 
 return M
