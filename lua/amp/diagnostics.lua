@@ -2,66 +2,20 @@
 ---@module 'amp.diagnostics'
 local M = {}
 
-local logger = require("amp.logger")
-
-M.state = {
-	diagnostics_enabled = false,
-	latest_diagnostics = {},
-}
-
----Enable diagnostics tracking
----@param server table The server object to use for broadcasting
-function M.enable(server)
-	if M.state.diagnostics_enabled then
-		return
-	end
-
-	M.state.diagnostics_enabled = true
-	M.server = server
-
-	M._create_autocommands()
-	logger.debug("diagnostics", "Diagnostics tracking enabled")
-end
-
-function M.disable()
-	if not M.state.diagnostics_enabled then
-		return
-	end
-
-	M.state.diagnostics_enabled = false
-	M._clear_autocommands()
-
-	M.state.latest_diagnostics = {}
-	M.server = nil
-
-	logger.debug("diagnostics", "Diagnostics tracking disabled")
-end
-
----Check if diagnostics has changed
----@param new_diagnostics vim.Diagnostic
----@return boolean
-function M.have_diagnostics_changed(new_diagnostics)
-	return vim.inspect(M.state.latest_diagnostics) ~= vim.inspect(new_diagnostics)
-end
-
----@alias JetBrainsSeverity "ERROR" | "WARNING" | "WEAK_WARNING" | "INFO"
-
+---@alias DiagnosticSeverity "error" | "warning" | "info" | "hint"
 ---@param severity vim.diagnostic.Severity
----@return JetBrainsSeverity
-function M._vim_severity_to_jetbrains(severity)
+---@return DiagnosticSeverity
+function M._vim_severity_to_protocol(severity)
 	if severity == vim.diagnostic.severity.ERROR then
-		return "ERROR"
+		return "error"
 	elseif severity == vim.diagnostic.severity.WARN then
-		return "WARNING"
+		return "warning"
 	elseif severity == vim.diagnostic.severity.INFO then
-		return "INFO"
+		return "info"
 	elseif severity == vim.diagnostic.severity.HINT then
-		-- The JetBrains protocol doesn't recognize "HINT", so we
-		-- use "WEAK_WARNING" instead
-		return "WEAK_WARNING"
+		return "hint"
 	end
-
-	error("unknown severity level: " .. severity)
+	return "info" -- fallback
 end
 
 ---@class Range
@@ -70,17 +24,23 @@ end
 ---@field endLine number
 ---@field endCharacter number
 
----@class JetBrainsDiagnostic
+---@class ProtocolDiagnostic
 ---@field range Range
----@field severity JetBrainsSeverity
+---@field severity DiagnosticSeverity
 ---@field description string
 ---@field lineContent string
 ---@field startOffset number
 ---@field endOffset number
 
 ---@param diagnostic vim.Diagnostic
----@return JetBrainsDiagnostic
-function M._vim_diagnostic_to_jetbrains(diagnostic)
+---@return ProtocolDiagnostic
+function M._vim_diagnostic_to_protocol(diagnostic)
+	local line_content = ""
+	local ok, lines = pcall(vim.api.nvim_buf_get_lines, diagnostic.bufnr, diagnostic.lnum, diagnostic.lnum + 1, false)
+	if ok and lines and lines[1] then
+		line_content = lines[1]
+	end
+
 	return {
 		range = {
 			startLine = diagnostic.lnum,
@@ -88,61 +48,47 @@ function M._vim_diagnostic_to_jetbrains(diagnostic)
 			endLine = diagnostic.end_lnum,
 			endCharacter = diagnostic.end_col,
 		},
-		severity = M._vim_severity_to_jetbrains(diagnostic.severity),
+		severity = M._vim_severity_to_protocol(diagnostic.severity),
 		description = diagnostic.message,
-		lineContent = vim.api.nvim_buf_get_lines(diagnostic.bufnr, diagnostic.lnum, diagnostic.lnum + 1, false)[1],
+		lineContent = line_content,
 		startOffset = diagnostic.col,
 		endOffset = diagnostic.end_col,
 	}
 end
 
-function M.broadcast_diagnostics(force)
-	if not M.state.diagnostics_enabled or not M.server then
-		return
-	end
+---Get diagnostics by path prefix (matches single file or all files in directory)
+---@param path string Absolute path to file or directory
+---@return table entries Array of diagnostic entries
+function M.get_diagnostics(path)
+	local abs_path = vim.fn.fnamemodify(path, ":p")
+	local all_diagnostics = vim.diagnostic.get(nil)
+	local entries_by_uri = {}
 
-	local diagnostics = vim.diagnostic.get(nil)
+	for _, diag in ipairs(all_diagnostics) do
+		local ok, buf_name = pcall(vim.api.nvim_buf_get_name, diag.bufnr)
+		if ok and buf_name and buf_name ~= "" then
+			local abs_buf_name = vim.fn.fnamemodify(buf_name, ":p")
 
-	if force or M.have_diagnostics_changed(diagnostics) then
-		M.state.latest_diagnostics = diagnostics
-		local diagnostics_by_bufnr = {}
-		for _, value in ipairs(diagnostics) do
-			if not diagnostics_by_bufnr[value.bufnr] then
-				diagnostics_by_bufnr[value.bufnr] = {}
+			-- Check if buffer path starts with the requested path (prefix match)
+			if abs_buf_name:sub(1, #abs_path) == abs_path then
+				local uri = "file://" .. abs_buf_name
+				if not entries_by_uri[uri] then
+					entries_by_uri[uri] = {
+						uri = uri,
+						diagnostics = {},
+					}
+				end
+				table.insert(entries_by_uri[uri].diagnostics, M._vim_diagnostic_to_protocol(diag))
 			end
-			table.insert(diagnostics_by_bufnr[value.bufnr], M._vim_diagnostic_to_jetbrains(value))
-		end
-
-		for idiagnostic, diagnostic in pairs(diagnostics_by_bufnr) do
-			local name = "file://" .. vim.api.nvim_buf_get_name(idiagnostic)
-			local diagnostics_message = {
-				diagnosticsDidChange = {
-					uri = name,
-					diagnostics = diagnostic,
-				},
-			}
-			M.server.broadcast_ide(diagnostics_message)
 		end
 	end
-end
 
----Create autocommands for diagnostics tracking
-function M._create_autocommands()
-	local group = vim.api.nvim_create_augroup("AmpDiagnostics", { clear = true })
+	local entries = {}
+	for _, entry in pairs(entries_by_uri) do
+		table.insert(entries, entry)
+	end
 
-	vim.api.nvim_create_autocmd("DiagnosticChanged", {
-		group = group,
-		callback = function(_)
-			vim.defer_fn(function()
-				M.broadcast_diagnostics()
-			end, 10)
-		end,
-	})
-end
-
----Clear autocommands
-function M._clear_autocommands()
-	vim.api.nvim_clear_autocmds({ group = "AmpDiagnostics" })
+	return entries
 end
 
 return M
