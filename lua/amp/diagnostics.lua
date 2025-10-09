@@ -56,83 +56,36 @@ function M._vim_diagnostic_to_protocol(diagnostic)
 	}
 end
 
----Get diagnostics for a file path (must be open in a buffer)
----@param file_path string Absolute path to file
----@return table|nil entry Diagnostic entry or nil if no buffer found
-local function get_diagnostics_for_file(file_path)
-	local abs_path = vim.fn.fnamemodify(file_path, ":p")
-	local uri = "file://" .. abs_path
-	local bufnr = vim.fn.bufnr("^" .. abs_path .. "$")
-
-	if bufnr == -1 then
-		return nil
-	end
-
-	local diagnostics = {}
-	local raw_diagnostics = vim.diagnostic.get(bufnr)
-	for _, diag in ipairs(raw_diagnostics) do
-		table.insert(diagnostics, M._vim_diagnostic_to_protocol(diag))
-	end
-
-	return {
-		uri = uri,
-		diagnostics = diagnostics,
-	}
-end
-
----Get all file paths matching the given path (file or directory)
----@param path string Absolute path to file or directory
----@return string[] List of absolute file paths
-local function get_file_paths(path)
-	local uv = vim.loop
-	local stat = uv.fs_stat(path)
-
-	if not stat then
-		return {}
-	end
-
-	if stat.type == "file" then
-		return { vim.fn.fnamemodify(path, ":p") }
-	elseif stat.type == "directory" then
-		local abs_dir = vim.fn.fnamemodify(path, ":p")
-		if not abs_dir:match("/$") then
-			abs_dir = abs_dir .. "/"
-		end
-
-		-- Performance: Only collect diagnostics from already-loaded buffers.
-		-- We avoid filesystem recursion and don't open new buffers, making this fast.
-		-- Trade-off: Unopened files won't have diagnostics, but LSP diagnostics require
-		-- buffers to be loaded anyway.
-		local file_paths = {}
-		for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-			if vim.api.nvim_buf_is_loaded(bufnr) then
-				local ok, buf_name = pcall(vim.api.nvim_buf_get_name, bufnr)
-				if ok and buf_name and buf_name ~= "" then
-					local abs_buf_name = vim.fn.fnamemodify(buf_name, ":p")
-					if abs_buf_name:sub(1, #abs_dir) == abs_dir then
-						table.insert(file_paths, abs_buf_name)
-					end
-				end
-			end
-		end
-		return file_paths
-	end
-
-	return {}
-end
-
----Get diagnostics for a specific path (file or directory)
+---Get diagnostics by path prefix (matches single file or all files in directory)
 ---@param path string Absolute path to file or directory
 ---@return table entries Array of diagnostic entries
 function M.get_diagnostics(path)
-	local entries = {}
-	local file_paths = get_file_paths(path)
+	local abs_path = vim.fn.fnamemodify(path, ":p")
+	local all_diagnostics = vim.diagnostic.get(nil)
+	local entries_by_uri = {}
 
-	for _, file_path in ipairs(file_paths) do
-		local entry = get_diagnostics_for_file(file_path)
-		if entry then
-			table.insert(entries, entry)
+	for _, diag in ipairs(all_diagnostics) do
+		local ok, buf_name = pcall(vim.api.nvim_buf_get_name, diag.bufnr)
+		if ok and buf_name and buf_name ~= "" then
+			local abs_buf_name = vim.fn.fnamemodify(buf_name, ":p")
+
+			-- Check if buffer path starts with the requested path (prefix match)
+			if abs_buf_name:sub(1, #abs_path) == abs_path then
+				local uri = "file://" .. abs_buf_name
+				if not entries_by_uri[uri] then
+					entries_by_uri[uri] = {
+						uri = uri,
+						diagnostics = {},
+					}
+				end
+				table.insert(entries_by_uri[uri].diagnostics, M._vim_diagnostic_to_protocol(diag))
+			end
 		end
+	end
+
+	local entries = {}
+	for _, entry in pairs(entries_by_uri) do
+		table.insert(entries, entry)
 	end
 
 	return entries
