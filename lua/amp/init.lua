@@ -53,6 +53,9 @@ end
 ---@param opts table|nil Optional configuration
 ---@return table module The plugin module
 function M.setup(opts)
+	if vim.g.vscode then
+		return M
+	end
 	opts = opts or {}
 
 	local config = require("amp.config")

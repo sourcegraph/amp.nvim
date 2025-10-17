@@ -7,5 +7,8 @@
     "checkThirdParty": false,
     "library": ["$VIMRUNTIME", "${3rd}/luv/library"]
   },
+  "diagnostics": {
+    "globals": ["vim"]
+  },
   "Lua.format.enable": false
 }
