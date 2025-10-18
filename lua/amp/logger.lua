@@ -18,7 +18,8 @@ end
 local function log(level, context, ...)
 	if log_levels[level] >= current_level then
 		local message = table.concat({ ... }, " ")
-		print(string.format("[%s] %s: %s", level:upper(), context, message))
+		local notify_level = vim.log.levels[level:upper()] or vim.log.levels.INFO
+		vim.notify(string.format("%s: %s", context, message), notify_level)
 	end
 end
 
