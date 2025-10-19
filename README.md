@@ -8,7 +8,7 @@ When installed, this plugin allows Neovim to:
 
 - Notify Amp about currently open file
 - Notify Amp about selected code
-- Notify Amp about Neovim diagnostics
+- Provide Neovim diagnostics to Amp on request
 - Send messages to the Amp agent (see [Sending Messages to Amp](#sending-messages-to-amp))
 - Read and edit files through the Neovim buffers
 
