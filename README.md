@@ -11,6 +11,7 @@ When installed, this plugin allows Neovim to:
 - Provide Neovim diagnostics to Amp on request
 - Send messages to the Amp agent (see [Sending Messages to Amp](#sending-messages-to-amp))
 - Read and edit files through the Neovim buffers
+- Automatically reconnects when you restart Neovim in the same directory
 
 ## Installation
 
@@ -137,10 +138,6 @@ end, {
 
 Do you have a feature request or an idea? Submit an issue in this repo!
 
-- Better reconnect: Nvim users are much more likely to reopen their IDE than JetBrains users. Because of that, we should check if we can automatically reconnect to an IDE in the same path that we had the last connection with.
-- When I ask Amp to show me a particular section of code, it would be nice if Amp could open that file and select the code for me.
-- Should we keep the code selection when moving between tab? Currently you can't switch to a split terminal if you don't want to loose the selection, i.e. making the built in terminal unfeasible for code selection.
-
 ## Development
 
 Uses `stylua` for general formatting, and `lua-language-server` for linting.
@@ -158,6 +155,10 @@ The plugin uses the same lockfile directory pattern as the main Amp repository:
 - **Linux**: `$XDG_DATA_HOME/amp/ide` or `~/.local/share/amp/ide`
 
 You can override the data directory by setting the `AMP_DATA_HOME` environment variable for testing or custom setups.
+
+## Logging
+
+The amp.nvim plugin logs to `~/.cache/nvim/amp.log`.
 
 ## Contributing
 

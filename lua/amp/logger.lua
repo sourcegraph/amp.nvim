@@ -8,17 +8,31 @@ local log_levels = {
 	error = 5,
 }
 
-local current_level = 3 -- info
+local current_level = log_levels.info
 local last_error = nil
+local log_file = nil
 
 function M.setup(config)
-	current_level = log_levels[config.log_level] or 3
+	current_level = log_levels[config.log_level] or log_levels.info
+	if not log_file then
+		local log_path = vim.fn.stdpath("cache") .. "/amp.log"
+		log_file = io.open(log_path, "w+")
+		if log_file then
+			log_file:setvbuf("line")
+		end
+	end
 end
 
 local function log(level, context, ...)
 	if log_levels[level] >= current_level then
 		local message = table.concat({ ... }, " ")
-		print(string.format("[%s] %s: %s", level:upper(), context, message))
+		local timestamp = os.date("%Y-%m-%d %H:%M:%S")
+		local log_line = string.format("[%s] [%s] %s: %s\n", timestamp, level:upper(), context, message)
+		
+		if log_file then
+			log_file:write(log_line)
+			log_file:flush()
+		end
 	end
 end
 
