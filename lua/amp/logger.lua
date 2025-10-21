@@ -8,7 +8,7 @@ local log_levels = {
 	error = 5,
 }
 
-local current_level = 3
+local current_level = log_levels.info
 local last_error = nil
 local log_file = nil
 
