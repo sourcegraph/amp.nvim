@@ -13,7 +13,7 @@ local last_error = nil
 local log_file = nil
 
 function M.setup(config)
-	current_level = log_levels[config.log_level] or 3
+	current_level = log_levels[config.log_level] or log_levels.info
 	if not log_file then
 		local log_path = vim.fn.stdpath("cache") .. "/amp.log"
 		log_file = io.open(log_path, "w+")
