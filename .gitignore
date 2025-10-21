@@ -1,1 +1,5 @@
 .idea
+
+# Slack MCP
+.channels_cache_v2.json
+.users_cache.json
