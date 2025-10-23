@@ -141,6 +141,7 @@ function M.get_visual_selection()
 		if current_mode == "V" then
 			-- Line-wise selection: adjust character positions to span entire lines
 			start_char = 0
+            -- Get the length of the last line, that's the position of the last character in the selection
 			end_char = #lines[#lines]
 			selected_text = table.concat(lines, "\n")
 		elseif #lines == 1 then
