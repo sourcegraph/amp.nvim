@@ -139,7 +139,9 @@ function M.get_visual_selection()
 
 	if #lines > 0 then
 		if current_mode == "V" then
-			-- Line-wise selection
+			-- Line-wise selection: adjust character positions to span entire lines
+			start_char = 0
+			end_char = #lines[#lines]
 			selected_text = table.concat(lines, "\n")
 		elseif #lines == 1 then
 			-- Single line selection
