@@ -4,6 +4,7 @@ M.defaults = {
 	port_range = { min = 10000, max = 65535 },
 	auto_start = true,
 	log_level = "info",
+	thread_storage_dir = "/tmp",
 }
 
 function M.validate(config)
@@ -28,6 +29,8 @@ function M.validate(config)
 		end
 	end
 	assert(is_valid, "log_level must be one of: " .. table.concat(valid_log_levels, ", "))
+
+	assert(type(config.thread_storage_dir) == "string", "thread_storage_dir must be a string")
 
 	return true
 end

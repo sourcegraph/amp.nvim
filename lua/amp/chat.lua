@@ -24,7 +24,7 @@ local function start_spinner(buf)
 
 			local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 			for i = #lines, 1, -1 do
-				if lines[i]:match("^🤖 Amp Response") then
+				if lines[i]:match("^🦜:%[amp%]") then
 					spinner_line = i - 1
 					break
 				end
@@ -37,7 +37,7 @@ local function start_spinner(buf)
 					spinner_line,
 					spinner_line + 1,
 					false,
-					{ "🤖 Amp Response " .. spinner_frames[frame_idx] }
+					{ "🦜:[amp] " .. spinner_frames[frame_idx] }
 				)
 				frame_idx = (frame_idx % #spinner_frames) + 1
 			end
@@ -60,16 +60,16 @@ local function stop_spinner(buf, timer)
 	vim.schedule(function()
 		local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 		for i = #lines, 1, -1 do
-			if lines[i]:match("^🤖 Amp Response") then
+			if lines[i]:match("^🦜:%[amp%]") then
 				vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-				vim.api.nvim_buf_set_lines(buf, i - 1, i, false, { "🤖 Amp Response" })
+				vim.api.nvim_buf_set_lines(buf, i - 1, i, false, { "🦜:[amp]" })
 				break
 			end
 		end
 	end)
 end
 
-local function create_chat_buffer(thread_id)
+local function create_chat_buffer(thread_id, working_dir)
 	local buf = vim.api.nvim_create_buf(false, true)
 	local buf_name = thread_id and ("Amp Chat: " .. thread_id) or "Amp Chat: New Thread"
 
@@ -107,7 +107,7 @@ local function get_user_input_range(buf)
 	local separator_line = nil
 
 	for i = #lines, 1, -1 do
-		if lines[i]:match("^👤") or lines[i]:match("^%-%-%-+ USER %-%-%-+$") then
+		if lines[i]:match("^🗨:") then
 			separator_line = i
 			break
 		end
@@ -127,11 +127,12 @@ function M.send_message(buf, passed_thread_id)
 	end
 
 	local thread_id = passed_thread_id or (M.state.buffers[buf] and M.state.buffers[buf].thread_id)
+	local working_dir = M.state.buffers[buf] and M.state.buffers[buf].working_dir
 	
 	local start_line, end_line = get_user_input_range(buf)
 
 	if not start_line then
-		vim.notify("No user input found. Type your message after the 👤 User separator", vim.log.levels.WARN)
+		vim.notify("No user input found. Type your message after the 🗨: separator", vim.log.levels.WARN)
 		return
 	end
 
@@ -149,15 +150,28 @@ function M.send_message(buf, passed_thread_id)
 	vim.notify("⏳ Sending message to Amp...", vim.log.levels.INFO)
 
 	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🤖 Amp Response", "" })
+	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🦜:[amp]", "" })
 
 	local spinner_timer = start_spinner(buf)
 
+	local amp = require("amp")
+	local thread_storage_dir = amp.state.config.thread_storage_dir
+
 	local cmd
 	if thread_id then
-		cmd = string.format("echo %s | amp threads continue %s --execute", vim.fn.shellescape(message), thread_id)
+		cmd = string.format(
+			"cd %s && echo %s | amp threads continue %s --execute",
+			vim.fn.shellescape(working_dir or vim.fn.getcwd()),
+			vim.fn.shellescape(message),
+			thread_id
+		)
 	else
-		cmd = string.format("echo %s | amp --execute", vim.fn.shellescape(message))
+		cmd = string.format(
+			"cd %s && echo %s | AMP_THREAD_DIR=%s amp --execute",
+			vim.fn.shellescape(working_dir or vim.fn.getcwd()),
+			vim.fn.shellescape(message),
+			vim.fn.shellescape(thread_storage_dir)
+		)
 	end
 
 	local response_lines = {}
@@ -234,7 +248,7 @@ function M.send_message(buf, passed_thread_id)
 						end
 					end
 
-					vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "👤 User", "" })
+					vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
 					vim.notify("✅ Message sent successfully", vim.log.levels.INFO)
 
 					local win = vim.fn.bufwinid(buf)
@@ -262,21 +276,22 @@ function M.enter_input_mode(buf)
 	vim.cmd("startinsert!")
 end
 
-function M.open_chat_buffer(thread_id, initial_message)
-	local buf = create_chat_buffer(thread_id)
+function M.open_chat_buffer(thread_id, initial_message, topic)
+	local working_dir = vim.fn.getcwd()
+	local buf = create_chat_buffer(thread_id, working_dir)
 
 	local win = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(win, buf)
 
+	local topic_line = topic or "New Chat"
+	
 	local initial_lines = {
-		"# 💬 Amp Chat Interface",
+		"# topic: " .. topic_line,
+		"# cwd: " .. working_dir,
 		"",
-		"Commands:",
-		"  - <C-g> (normal or insert mode): Send message",
-		"  - q (normal mode): Close buffer",
-		"  - i (normal mode): Enter input mode",
+		"---",
 		"",
-		"👤 User",
+		"🗨:",
 		initial_message or "",
 	}
 
@@ -286,6 +301,7 @@ function M.open_chat_buffer(thread_id, initial_message)
 
 	M.state.buffers[buf] = {
 		thread_id = thread_id,
+		working_dir = working_dir,
 		created_at = os.time(),
 	}
 
