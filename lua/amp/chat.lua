@@ -68,6 +68,18 @@ local function save_buffer_to_file(buf, thread_id, immediate)
 	end
 end
 
+local function strip_ansi_codes(str)
+	return str:gsub("\27%[[%d;]*m", "")
+		:gsub("\27%[%?%d+[hl]", "")
+		:gsub("\27%[%d*[ABCDEFGJKST]", "")
+		:gsub("\27%]%d+;[^\7]*\7", "")
+		:gsub("\27%[[%d;]*[HfABCDEFGJKST]", "")
+		:gsub("\27%[=%d+[ul]", "")
+		:gsub("\27%[<%d*[ul]", "")
+		:gsub("\27%[%?%d+[hl]", "")
+		:gsub("\r", "")
+end
+
 local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 local function start_spinner(buf)
 	local frame_idx = 1
@@ -134,11 +146,19 @@ local function create_chat_buffer(thread_id, working_dir)
 	local buf = vim.api.nvim_create_buf(false, true)
 	local buf_name = thread_id and ("Amp Chat: " .. thread_id .. ".md") or "Amp Chat: New Thread.md"
 
-	vim.api.nvim_buf_set_name(buf, buf_name)
+	pcall(vim.api.nvim_buf_set_name, buf, buf_name)
 	vim.api.nvim_set_option_value("buftype", "acwrite", { buf = buf })
 	vim.api.nvim_set_option_value("swapfile", false, { buf = buf })
-	vim.api.nvim_set_option_value("filetype", "markdown", { buf = buf })
 	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+	
+	vim.api.nvim_buf_set_var(buf, "lsp_disabled", true)
+	vim.api.nvim_buf_set_var(buf, "navigator_disable", true)
+	
+	vim.schedule(function()
+		if vim.api.nvim_buf_is_valid(buf) then
+			vim.api.nvim_set_option_value("filetype", "markdown", { buf = buf })
+		end
+	end)
 
 	return buf
 end
@@ -235,26 +255,24 @@ function M.send_message(buf, passed_thread_id)
 
 	local cmd
 	local env = {}
+	
 	if thread_id then
-		cmd = string.format(
-			"echo %s | amp threads continue %s --execute",
-			vim.fn.shellescape(message),
-			thread_id
-		)
+		cmd = { "amp", "threads", "continue", thread_id, "--execute", message }
 	else
-		cmd = string.format(
-			"echo %s | amp --execute",
-			vim.fn.shellescape(message)
-		)
+		cmd = { "amp", "--execute", message }
 		env = { AMP_THREAD_DIR = thread_storage_dir }
 	end
 
 	local response_lines = {}
 	local timeout_timer = nil
+	local stdin_written = false
 
 	local job_id = vim.fn.jobstart(cmd, {
 		cwd = working_dir,
 		env = env,
+		pty = true,
+		width = 120,
+		height = 40,
 		on_stdout = function(_, data)
 			if not data then
 				return
@@ -267,20 +285,27 @@ function M.send_message(buf, passed_thread_id)
 
 				vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 
+				local cleaned_data = {}
 				for _, line in ipairs(data) do
-					table.insert(response_lines, line)
+					local cleaned_line = strip_ansi_codes(line)
+					if cleaned_line ~= "" then
+						table.insert(cleaned_data, cleaned_line)
+						table.insert(response_lines, cleaned_line)
+					end
 				end
 
-				local current_line_count = vim.api.nvim_buf_line_count(buf)
-				vim.api.nvim_buf_set_lines(buf, current_line_count, current_line_count, false, data)
+				if #cleaned_data > 0 then
+					local current_line_count = vim.api.nvim_buf_line_count(buf)
+					vim.api.nvim_buf_set_lines(buf, current_line_count, current_line_count, false, cleaned_data)
 
-				local win = vim.fn.bufwinid(buf)
-				if win ~= -1 then
-					local new_line_count = vim.api.nvim_buf_line_count(buf)
-					vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
+					local win = vim.fn.bufwinid(buf)
+					if win ~= -1 then
+						local new_line_count = vim.api.nvim_buf_line_count(buf)
+						vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
+					end
+					
+					save_buffer_to_file(buf, thread_id)
 				end
-				
-				save_buffer_to_file(buf, thread_id)
 			end)
 		end,
 		on_stderr = function(_, data)
@@ -316,49 +341,37 @@ function M.send_message(buf, passed_thread_id)
 				if exit_code == 0 then
 					if not thread_id then
 						local list_output = vim.fn.system({ "amp", "threads", "list" })
-						local list_lines = vim.split(list_output, "\n", { plain = true })
+						local new_thread_id = list_output:match("(T%-[a-f0-9%-]+)")
 						
-						logger.debug("chat", "Thread list output: " .. vim.inspect(list_lines))
-						
-						if #list_lines > 2 then
-							local first_thread_line = list_lines[3]
-							local parts = vim.split(first_thread_line, "  ", { plain = false, trimempty = true })
+						if new_thread_id then
+							logger.info("chat", "Extracted thread ID: '" .. new_thread_id .. "'")
 							
-							logger.debug("chat", "Thread line parts: " .. vim.inspect(parts))
+							M.state.buffers[buf].thread_id = new_thread_id
 							
-							if #parts >= 5 then
-								local new_thread_id = vim.trim(parts[5])
-								logger.info("chat", "Extracted thread ID: '" .. new_thread_id .. "'")
-								
-								M.state.buffers[buf].thread_id = new_thread_id
-								
-								local buf_name = "Amp Chat: " .. new_thread_id .. ".md"
-								vim.api.nvim_buf_set_name(buf, buf_name)
-								
-								local thread_url = "https://ampcode.com/threads/" .. new_thread_id
-								logger.info("chat", "Thread URL: " .. thread_url)
-								
-								local lines = vim.api.nvim_buf_get_lines(buf, 0, 5, false)
-								local has_url = false
-								for _, line in ipairs(lines) do
-									if line:match("^# thread:") then
-										has_url = true
-										break
-									end
+							local buf_name = "Amp Chat: " .. new_thread_id .. ".md"
+							pcall(vim.api.nvim_buf_set_name, buf, buf_name)
+							
+							local thread_url = "https://ampcode.com/threads/" .. new_thread_id
+							logger.info("chat", "Thread URL: " .. thread_url)
+							
+							local lines = vim.api.nvim_buf_get_lines(buf, 0, 5, false)
+							local has_url = false
+							for _, line in ipairs(lines) do
+								if line:match("^# thread:") then
+									has_url = true
+									break
 								end
-								
-								if not has_url then
-									vim.api.nvim_buf_set_lines(buf, 0, 0, false, { "# thread: " .. thread_url })
-								end
-								
-								save_buffer_to_file(buf, new_thread_id, true)
-								
-								logger.info("chat", "Thread created: " .. new_thread_id)
-							else
-								logger.warn("chat", "Could not parse thread ID - not enough parts")
 							end
+							
+							if not has_url then
+								vim.api.nvim_buf_set_lines(buf, 0, 0, false, { "# thread: " .. thread_url })
+							end
+							
+							save_buffer_to_file(buf, new_thread_id, true)
+							
+							logger.info("chat", "Thread created: " .. new_thread_id)
 						else
-							logger.warn("chat", "Thread list output too short")
+							logger.warn("chat", "Could not extract thread ID from list output")
 						end
 					end
 
@@ -377,8 +390,9 @@ function M.send_message(buf, passed_thread_id)
 		end,
 		stdout_buffered = false,
 		stderr_buffered = false,
-		shell = true,
 	})
+	
+
 
 	M.state.buffers[buf] = M.state.buffers[buf] or {}
 	M.state.buffers[buf].job_id = job_id
