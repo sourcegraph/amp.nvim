@@ -12,6 +12,8 @@ When installed, this plugin allows Neovim to:
 - Send messages to the Amp agent (see [Sending Messages to Amp](#sending-messages-to-amp))
 - Read and edit files through the Neovim buffers
 - Automatically reconnects when you restart Neovim in the same directory
+- Browse and manage Amp threads with Telescope (see [Thread Management](#thread-management))
+- Chat with Amp directly in Neovim buffers (see [Chat Interface](#chat-interface))
 
 ## Installation
 
@@ -155,6 +157,55 @@ end, {
   desc = "Add file reference (with selection) to Amp prompt",
 })
 ```
+
+## Thread Management
+
+Browse, select, and manage your Amp threads directly from Neovim using Telescope integration.
+
+### Commands
+
+- `:AmpThreads` - Open Telescope picker to browse all your Amp threads
+  - `<CR>` - Open selected thread in a chat buffer
+  - `<C-o>` - Open selected thread in your browser
+  - `<C-n>` - Create a new thread
+
+### Requirements
+
+Thread management requires [telescope.nvim](https://github.com/nvim-telescope/telescope.nvim) to be installed.
+
+## Chat Interface
+
+Interact with Amp directly in Neovim buffers, similar to parrot.nvim. Type your messages, send them to Amp, and receive responses in real-time.
+
+### Commands
+
+- `:AmpChat` - Open a new chat buffer for a new thread
+- `:AmpChatThread <thread-id>` - Open a chat buffer for an existing thread
+
+### Usage
+
+Once in a chat buffer:
+
+- Type your message after the `--- USER ---` separator
+- Press `<C-g>` in normal or insert mode to send the message
+- Press `i` in normal mode to jump to input mode
+- Press `q` in normal mode to close the chat buffer
+
+Messages and responses appear in the buffer in real-time, formatted in Markdown.
+
+### Example Workflow
+
+1. Run `:AmpThreads` to browse your existing threads
+2. Select a thread with `<CR>` to open it in a chat buffer
+3. Type your message and press `<C-g>` to send
+4. View Amp's response as it streams in
+5. Continue the conversation or press `q` to close
+
+Alternatively, start a new conversation:
+
+1. Run `:AmpChat` to create a new thread
+2. Type your first message
+3. Press `<C-g>` to send and start the conversation
 
 ## Feature Ideas
 
