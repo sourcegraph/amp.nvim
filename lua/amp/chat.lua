@@ -23,8 +23,8 @@ local function start_spinner(buf)
 			end
 
 			local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-			for i, line in ipairs(lines) do
-				if line:match("^🤖 Amp Response") then
+			for i = #lines, 1, -1 do
+				if lines[i]:match("^🤖 Amp Response") then
 					spinner_line = i - 1
 					break
 				end
@@ -59,8 +59,8 @@ local function stop_spinner(buf, timer)
 
 	vim.schedule(function()
 		local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-		for i, line in ipairs(lines) do
-			if line:match("^🤖 Amp Response") then
+		for i = #lines, 1, -1 do
+			if lines[i]:match("^🤖 Amp Response") then
 				vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 				vim.api.nvim_buf_set_lines(buf, i - 1, i, false, { "🤖 Amp Response" })
 				break
