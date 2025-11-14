@@ -40,6 +40,28 @@ MiniDeps.add({
 require('amp').setup({ auto_start = true, log_level = "info" })
 ```
 
+### Using vim-plug
+
+Add to your `init.vim` or `init.lua`:
+
+```vim
+Plug 'sourcegraph/amp.nvim', { 'branch': 'main' }
+```
+
+Or in Lua syntax:
+
+```lua
+vim.call('plug#begin')
+vim.fn['plug#']('sourcegraph/amp.nvim', { branch = 'main' })
+vim.call('plug#end')
+```
+
+Then add to your config:
+
+```lua
+require('amp').setup({ auto_start = true, log_level = "info" })
+```
+
 ### Using Neovim's Native Package System
 
 ```bash
