@@ -5,6 +5,7 @@ M.defaults = {
 	auto_start = true,
 	log_level = "info",
 	thread_storage_dir = "/tmp",
+	thread_response_timeout = 300000,
 }
 
 function M.validate(config)
@@ -31,6 +32,11 @@ function M.validate(config)
 	assert(is_valid, "log_level must be one of: " .. table.concat(valid_log_levels, ", "))
 
 	assert(type(config.thread_storage_dir) == "string", "thread_storage_dir must be a string")
+
+	assert(
+		type(config.thread_response_timeout) == "number" and config.thread_response_timeout > 0,
+		"thread_response_timeout must be a positive number (in milliseconds)"
+	)
 
 	return true
 end

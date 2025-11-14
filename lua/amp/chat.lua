@@ -175,6 +175,7 @@ function M.send_message(buf, passed_thread_id)
 	end
 
 	local response_lines = {}
+	local timeout_timer = nil
 
 	local job_id = vim.fn.jobstart(cmd, {
 		on_stdout = function(_, data)
@@ -216,6 +217,11 @@ function M.send_message(buf, passed_thread_id)
 		end,
 		on_exit = function(_, exit_code)
 			stop_spinner(buf, spinner_timer)
+
+			if timeout_timer then
+				timeout_timer:stop()
+				timeout_timer:close()
+			end
 
 			if M.state.buffers[buf] then
 				M.state.buffers[buf].sending = false
@@ -268,6 +274,36 @@ function M.send_message(buf, passed_thread_id)
 
 	M.state.buffers[buf] = M.state.buffers[buf] or {}
 	M.state.buffers[buf].job_id = job_id
+
+	timeout_timer = vim.loop.new_timer()
+	timeout_timer:start(amp.state.config.thread_response_timeout, 0, function()
+		vim.schedule(function()
+			if M.state.buffers[buf] and M.state.buffers[buf].sending then
+				vim.fn.jobstop(job_id)
+				stop_spinner(buf, spinner_timer)
+				
+				if M.state.buffers[buf] then
+					M.state.buffers[buf].sending = false
+				end
+				
+				vim.notify(
+					"⏱️  Thread response timed out after " 
+						.. (amp.state.config.thread_response_timeout / 1000) 
+						.. " seconds",
+					vim.log.levels.WARN
+				)
+				
+				if vim.api.nvim_buf_is_valid(buf) then
+					vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+					vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
+				end
+			end
+			
+			if timeout_timer then
+				timeout_timer:close()
+			end
+		end)
+	end)
 end
 
 function M.enter_input_mode(buf)

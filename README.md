@@ -27,7 +27,11 @@ Install the plugin by adding this code to your lazy.vim config:
   "sourcegraph/amp.nvim",
   branch = "main", 
   lazy = false,
-  opts = { auto_start = true, log_level = "info" },
+  opts = { 
+    auto_start = true, 
+    log_level = "info",
+    thread_response_timeout = 300000  -- 5 minutes in milliseconds (default)
+  },
 }
 ```
 
