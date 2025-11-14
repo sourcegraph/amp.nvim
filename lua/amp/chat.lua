@@ -71,7 +71,7 @@ end
 
 local function create_chat_buffer(thread_id, working_dir)
 	local buf = vim.api.nvim_create_buf(false, true)
-	local buf_name = thread_id and ("Amp Chat: " .. thread_id) or "Amp Chat: New Thread"
+	local buf_name = thread_id and ("Amp Chat: " .. thread_id .. ".md") or "Amp Chat: New Thread.md"
 
 	vim.api.nvim_buf_set_name(buf, buf_name)
 	vim.api.nvim_set_option_value("buftype", "acwrite", { buf = buf })
@@ -240,7 +240,7 @@ function M.send_message(buf, passed_thread_id)
 								local new_thread_id = vim.trim(parts[5])
 								M.state.buffers[buf].thread_id = new_thread_id
 								
-								local buf_name = "Amp Chat: " .. new_thread_id
+								local buf_name = "Amp Chat: " .. new_thread_id .. ".md"
 								vim.api.nvim_buf_set_name(buf, buf_name)
 								
 								logger.info("chat", "Thread created: " .. new_thread_id)
