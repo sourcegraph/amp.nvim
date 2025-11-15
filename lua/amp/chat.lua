@@ -287,13 +287,18 @@ function M.send_message(buf, passed_thread_id)
 	local thread_storage_dir = amp.state.config.thread_storage_dir
 
 	local cmd
-	local env = {}
+	local job_opts = {
+		cwd = working_dir,
+		pty = true,
+		width = 120,
+		height = 40,
+	}
 	
 	if thread_id then
 		cmd = { "amp", "threads", "continue", thread_id, "--execute", message }
 	else
 		cmd = { "amp", "--execute", message }
-		env = { AMP_THREAD_STORAGE_DIR = thread_storage_dir }
+		job_opts.env = { AMP_THREAD_STORAGE_DIR = thread_storage_dir }
 	end
 
 	local response_lines = {}
@@ -302,78 +307,74 @@ function M.send_message(buf, passed_thread_id)
 
 	logger.info("chat", "Starting job with command: " .. vim.inspect(cmd))
 	
-	local job_id = vim.fn.jobstart(cmd, {
-		cwd = working_dir,
-		env = env,
-		pty = true,
-		width = 120,
-		height = 40,
-		on_stdout = function(_, data)
-			if not data then
+	job_opts.on_stdout = function(_, data)
+		if not data then
+			return
+		end
+
+		vim.schedule(function()
+			if not vim.api.nvim_buf_is_valid(buf) then
 				return
 			end
 
+			vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+
+			local cleaned_data = {}
+			for _, line in ipairs(data) do
+				local cleaned_line = strip_ansi_codes(line)
+				if cleaned_line ~= "" then
+					table.insert(cleaned_data, cleaned_line)
+					table.insert(response_lines, cleaned_line)
+				end
+			end
+
+			if #cleaned_data > 0 then
+				local current_line_count = vim.api.nvim_buf_line_count(buf)
+				vim.api.nvim_buf_set_lines(buf, current_line_count, current_line_count, false, cleaned_data)
+
+				local win = vim.fn.bufwinid(buf)
+				if win ~= -1 then
+					local new_line_count = vim.api.nvim_buf_line_count(buf)
+					vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
+				end
+				
+				save_buffer_to_file(buf, thread_id)
+			end
+		end)
+	end
+	
+	job_opts.on_stderr = function(_, data)
+		if data and #data > 0 then
 			vim.schedule(function()
-				if not vim.api.nvim_buf_is_valid(buf) then
-					return
-				end
-
-				vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-
-				local cleaned_data = {}
 				for _, line in ipairs(data) do
-					local cleaned_line = strip_ansi_codes(line)
-					if cleaned_line ~= "" then
-						table.insert(cleaned_data, cleaned_line)
-						table.insert(response_lines, cleaned_line)
+					if line ~= "" then
+						logger.error("chat", "Amp CLI: " .. line)
 					end
-				end
-
-				if #cleaned_data > 0 then
-					local current_line_count = vim.api.nvim_buf_line_count(buf)
-					vim.api.nvim_buf_set_lines(buf, current_line_count, current_line_count, false, cleaned_data)
-
-					local win = vim.fn.bufwinid(buf)
-					if win ~= -1 then
-						local new_line_count = vim.api.nvim_buf_line_count(buf)
-						vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
-					end
-					
-					save_buffer_to_file(buf, thread_id)
 				end
 			end)
-		end,
-		on_stderr = function(_, data)
-			if data and #data > 0 then
-				vim.schedule(function()
-					for _, line in ipairs(data) do
-						if line ~= "" then
-							logger.error("chat", "Amp CLI: " .. line)
-						end
-					end
-				end)
-			end
-		end,
-		on_exit = function(_, exit_code)
-			stop_spinner(buf, spinner_timer)
+		end
+	end
+	
+	job_opts.on_exit = function(_, exit_code)
+		stop_spinner(buf, spinner_timer)
 
-			if timeout_timer then
-				timeout_timer:stop()
-				timeout_timer:close()
-			end
+		if timeout_timer then
+			timeout_timer:stop()
+			timeout_timer:close()
+		end
 
-			if M.state.buffers[buf] then
-				M.state.buffers[buf].sending = false
+		if M.state.buffers[buf] then
+			M.state.buffers[buf].sending = false
+		end
+
+		vim.schedule(function()
+			if not vim.api.nvim_buf_is_valid(buf) then
+				return
 			end
 
-			vim.schedule(function()
-				if not vim.api.nvim_buf_is_valid(buf) then
-					return
-				end
+			vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 
-				vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-
-				if exit_code == 0 then
+			if exit_code == 0 then
 					if not thread_id then
 						-- Get the most recent thread from the list
 						local list_output = vim.fn.system({ "amp", "threads", "list" })
@@ -481,10 +482,12 @@ function M.send_message(buf, passed_thread_id)
 					vim.notify("❌ Failed to send message (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
 				end
 			end)
-		end,
-		stdout_buffered = false,
-		stderr_buffered = false,
-	})
+	end
+	
+	job_opts.stdout_buffered = false
+	job_opts.stderr_buffered = false
+	
+	local job_id = vim.fn.jobstart(cmd, job_opts)
 	
 	if job_id <= 0 then
 		stop_spinner(buf, spinner_timer)
@@ -537,6 +540,8 @@ function M.enter_input_mode(buf)
 end
 
 function M.open_chat_buffer(thread_id, initial_message, topic)
+	logger.info("chat", "open_chat_buffer called with thread_id: " .. (thread_id or "nil"))
+	
 	local working_dir = vim.fn.getcwd()
 	local buf = create_chat_buffer(thread_id, working_dir)
 
@@ -583,25 +588,66 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 	end
 	
 	if not loaded_from_file then
-		local topic_line = topic or "New Chat"
+		-- If thread_id exists but no file, try to fetch from server
+		if thread_id and not initial_message then
+			logger.info("chat", "Fetching thread history from server for " .. thread_id)
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "Loading thread history..." })
+			
+			local output = vim.fn.system({ "amp", "threads", "show", thread_id })
+			if vim.v.shell_error == 0 and output ~= "" then
+				local lines = vim.split(output, "\n", { plain = true })
+				-- Add metadata at the top
+				local metadata = {
+					"# topic: Thread " .. thread_id,
+					"",
+					"# thread: https://ampcode.com/threads/" .. thread_id,
+					"# cwd: " .. normalize_path(working_dir),
+					"# filepath: " .. normalize_path(file_path),
+					"",
+					"---",
+					"",
+				}
+				
+				-- Combine metadata with fetched content
+				for _, line in ipairs(lines) do
+					table.insert(metadata, line)
+				end
+				
+				-- Add input prompt at the end
+				table.insert(metadata, "")
+				table.insert(metadata, "🗨:")
+				table.insert(metadata, "")
+				
+				vim.api.nvim_buf_set_lines(buf, 0, -1, false, metadata)
+				save_buffer_to_file(buf, thread_id, true)
+				loaded_from_file = true
+				logger.info("chat", "Loaded thread history from server")
+			else
+				logger.warn("chat", "Failed to fetch thread from server: " .. output)
+			end
+		end
 		
-		local initial_lines = {}
-		table.insert(initial_lines, "# topic: " .. topic_line)
-		table.insert(initial_lines, "")
-		if thread_id then
-			table.insert(initial_lines, "# thread: https://ampcode.com/threads/" .. thread_id)
-		end
-		table.insert(initial_lines, "# cwd: " .. normalize_path(working_dir))
-		if file_path then
-			table.insert(initial_lines, "# filepath: " .. normalize_path(file_path))
-		end
-		table.insert(initial_lines, "")
-		table.insert(initial_lines, "---")
-		table.insert(initial_lines, "")
-		table.insert(initial_lines, "🗨:")
-		table.insert(initial_lines, initial_message or "")
+		if not loaded_from_file then
+			local topic_line = topic or "New Chat"
+			
+			local initial_lines = {}
+			table.insert(initial_lines, "# topic: " .. topic_line)
+			table.insert(initial_lines, "")
+			if thread_id then
+				table.insert(initial_lines, "# thread: https://ampcode.com/threads/" .. thread_id)
+			end
+			table.insert(initial_lines, "# cwd: " .. normalize_path(working_dir))
+			if file_path then
+				table.insert(initial_lines, "# filepath: " .. normalize_path(file_path))
+			end
+			table.insert(initial_lines, "")
+			table.insert(initial_lines, "---")
+			table.insert(initial_lines, "")
+			table.insert(initial_lines, "🗨:")
+			table.insert(initial_lines, initial_message or "")
 
-		vim.api.nvim_buf_set_lines(buf, 0, -1, false, initial_lines)
+			vim.api.nvim_buf_set_lines(buf, 0, -1, false, initial_lines)
+		end
 	end
 
 	setup_buffer_keymaps(buf, thread_id)
@@ -611,6 +657,8 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 		working_dir = working_dir,
 		created_at = os.time(),
 	}
+	
+	logger.info("chat", "Buffer state set - buf: " .. buf .. ", thread_id: " .. (thread_id or "nil"))
 
 	if initial_message and initial_message ~= "" then
 		vim.notify("Press <C-g> to send the message or edit it first", vim.log.levels.INFO)

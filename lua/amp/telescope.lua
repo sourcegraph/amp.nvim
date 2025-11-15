@@ -14,14 +14,41 @@ local function parse_thread_list(output)
 
   for i, line in ipairs(lines) do
     if i > 2 and line ~= "" then
-      local parts = vim.split(line, "  ", { plain = false, trimempty = true })
-      if #parts >= 5 then
+      -- Extract thread ID (last column, format T-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+      local thread_id = line:match("(T%-[a-f0-9%-]+)%s*$")
+      
+      if thread_id then
+        -- Remove the thread ID from the line (escape special chars for gsub)
+        local escaped_id = thread_id:gsub("%-", "%%-")
+        local remaining = line:gsub(escaped_id .. "%s*$", "")
+        
+        -- Extract messages (number before thread ID)
+        local messages = remaining:match("(%d+)%s*$")
+        if messages then
+          remaining = remaining:gsub(messages .. "%s*$", "")
+        end
+        
+        -- Extract visibility (Private/Public before messages)
+        local visibility = remaining:match("(%w+)%s*$")
+        if visibility then
+          remaining = remaining:gsub(visibility .. "%s*$", "")
+        end
+        
+        -- Extract last updated (e.g., "15s ago", "2m ago")
+        local last_updated = remaining:match("(%d+[smhd]%s+ago)%s*$")
+        if last_updated then
+          remaining = remaining:gsub(last_updated:gsub("%-", "%%-") .. "%s*$", "")
+        end
+        
+        -- What's left is the title
+        local title = vim.trim(remaining)
+        
         local thread = {
-          title = vim.trim(parts[1]),
-          last_updated = vim.trim(parts[2]),
-          visibility = vim.trim(parts[3]),
-          messages = vim.trim(parts[4]),
-          id = vim.trim(parts[5]),
+          title = title,
+          last_updated = last_updated or "",
+          visibility = visibility or "",
+          messages = messages or "",
+          id = thread_id,
         }
         table.insert(threads, thread)
       end
@@ -67,14 +94,16 @@ function M.list_threads(opts)
       finder = finders.new_table({
         results = threads,
         entry_maker = function(entry)
+          local title_with_time = entry.title
+          if entry.last_updated and entry.last_updated ~= "" then
+            title_with_time = string.format("%s (%s)", entry.title, entry.last_updated)
+          end
           return {
             value = entry,
             display = string.format(
-              "%-50s  %10s  %8s  %s",
-              entry.title:sub(1, 50),
-              entry.last_updated,
-              entry.messages .. " msgs",
-              entry.visibility
+              "%-70s  %s",
+              title_with_time:sub(1, 70),
+              entry.id
             ),
             ordinal = entry.title .. " " .. entry.id,
           }
@@ -88,7 +117,6 @@ function M.list_threads(opts)
             "Title: " .. entry.value.title,
             "ID: " .. entry.value.id,
             "Last Updated: " .. entry.value.last_updated,
-            "Visibility: " .. entry.value.visibility,
             "Messages: " .. entry.value.messages,
             "",
             "Press <CR> to continue thread in chat buffer",
