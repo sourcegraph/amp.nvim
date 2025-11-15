@@ -13,10 +13,10 @@ local function get_chat_file_path(thread_id)
 	end
 	
 	local amp = require("amp")
-	local cache_dir = vim.fn.stdpath("cache") .. "/amp/chats"
-	vim.fn.mkdir(cache_dir, "p")
+	local storage_dir = amp.state.config.thread_storage_dir
+	vim.fn.mkdir(storage_dir, "p")
 	
-	return cache_dir .. "/" .. thread_id .. ".md"
+	return storage_dir .. "/" .. thread_id .. ".md"
 end
 
 local save_timers = {}
@@ -153,10 +153,16 @@ local function create_chat_buffer(thread_id, working_dir)
 	
 	vim.api.nvim_buf_set_var(buf, "lsp_disabled", true)
 	vim.api.nvim_buf_set_var(buf, "navigator_disable", true)
+	vim.api.nvim_buf_set_var(buf, "amp_chat_buffer", true)
+	
+	-- Disable LSP and other plugins by setting filetype to a unique value first
+	-- This prevents other plugins from attaching during the scheduled callback
+	pcall(vim.api.nvim_set_option_value, "filetype", "amp-markdown", { buf = buf })
 	
 	vim.schedule(function()
 		if vim.api.nvim_buf_is_valid(buf) then
-			vim.api.nvim_set_option_value("filetype", "markdown", { buf = buf })
+			-- Now set to markdown for syntax highlighting
+			pcall(vim.api.nvim_set_option_value, "filetype", "markdown", { buf = buf })
 		end
 	end)
 
@@ -221,6 +227,22 @@ function M.send_message(buf, passed_thread_id)
 	end
 
 	local thread_id = passed_thread_id or (M.state.buffers[buf] and M.state.buffers[buf].thread_id)
+	
+	-- Try to extract thread_id from buffer content if not found in state
+	if not thread_id then
+		local lines = vim.api.nvim_buf_get_lines(buf, 0, 20, false)
+		for _, line in ipairs(lines) do
+			local id = line:match("^# thread: https://ampcode%.com/threads/(T%-[a-f0-9%-]+)")
+			if id then
+				thread_id = id
+				logger.info("chat", "Extracted thread ID from buffer: " .. thread_id)
+				break
+			end
+		end
+	end
+	
+	logger.info("chat", "send_message called with thread_id: " .. (thread_id or "nil"))
+	
 	local working_dir = get_working_dir_from_buffer(buf) or (M.state.buffers[buf] and M.state.buffers[buf].working_dir) or vim.fn.getcwd()
 	
 	local start_line, end_line = get_user_input_range(buf)
@@ -260,13 +282,15 @@ function M.send_message(buf, passed_thread_id)
 		cmd = { "amp", "threads", "continue", thread_id, "--execute", message }
 	else
 		cmd = { "amp", "--execute", message }
-		env = { AMP_THREAD_DIR = thread_storage_dir }
+		env = { AMP_THREAD_STORAGE_DIR = thread_storage_dir }
 	end
 
 	local response_lines = {}
 	local timeout_timer = nil
 	local stdin_written = false
 
+	logger.info("chat", "Starting job with command: " .. vim.inspect(cmd))
+	
 	local job_id = vim.fn.jobstart(cmd, {
 		cwd = working_dir,
 		env = env,
@@ -340,12 +364,14 @@ function M.send_message(buf, passed_thread_id)
 
 				if exit_code == 0 then
 					if not thread_id then
-						local list_output = vim.fn.system({ "amp", "threads", "list" })
+						-- Get the most recent thread (first line of output)
+						local list_output = vim.fn.system({ "amp", "threads", "list", "--limit", "1" })
 						local new_thread_id = list_output:match("(T%-[a-f0-9%-]+)")
 						
 						if new_thread_id then
-							logger.info("chat", "Extracted thread ID: '" .. new_thread_id .. "'")
+							logger.info("chat", "Extracted thread ID from amp threads list: '" .. new_thread_id .. "'")
 							
+							M.state.buffers[buf] = M.state.buffers[buf] or {}
 							M.state.buffers[buf].thread_id = new_thread_id
 							
 							local buf_name = "Amp Chat: " .. new_thread_id .. ".md"
@@ -354,17 +380,47 @@ function M.send_message(buf, passed_thread_id)
 							local thread_url = "https://ampcode.com/threads/" .. new_thread_id
 							logger.info("chat", "Thread URL: " .. thread_url)
 							
-							local lines = vim.api.nvim_buf_get_lines(buf, 0, 5, false)
+							local new_file_path = get_chat_file_path(new_thread_id)
+							
+							local lines = vim.api.nvim_buf_get_lines(buf, 0, 10, false)
+							local has_filepath = false
 							local has_url = false
-							for _, line in ipairs(lines) do
+							local filepath_line_idx = nil
+							local url_line_idx = nil
+							
+							for i, line in ipairs(lines) do
+								if line:match("^# filepath:") then
+									has_filepath = true
+									filepath_line_idx = i - 1
+								end
 								if line:match("^# thread:") then
 									has_url = true
-									break
+									url_line_idx = i - 1
 								end
 							end
 							
+							if has_filepath and new_file_path then
+								vim.api.nvim_buf_set_lines(buf, filepath_line_idx, filepath_line_idx + 1, false, { "# filepath: " .. new_file_path })
+							elseif new_file_path then
+								local insert_line = 0
+								for i, line in ipairs(lines) do
+									if line:match("^# cwd:") then
+										insert_line = i
+										break
+									end
+								end
+								vim.api.nvim_buf_set_lines(buf, insert_line, insert_line, false, { "# filepath: " .. new_file_path })
+							end
+							
 							if not has_url then
-								vim.api.nvim_buf_set_lines(buf, 0, 0, false, { "# thread: " .. thread_url })
+								local insert_line = 0
+								for i, line in ipairs(lines) do
+									if line:match("^# topic:") then
+										insert_line = i + 1
+										break
+									end
+								end
+								vim.api.nvim_buf_set_lines(buf, insert_line, insert_line, false, { "# thread: " .. thread_url })
 							end
 							
 							save_buffer_to_file(buf, new_thread_id, true)
@@ -392,7 +448,15 @@ function M.send_message(buf, passed_thread_id)
 		stderr_buffered = false,
 	})
 	
-
+	if job_id <= 0 then
+		stop_spinner(buf, spinner_timer)
+		logger.error("chat", "Failed to start job, job_id: " .. job_id)
+		vim.notify("❌ Failed to start amp command", vim.log.levels.ERROR)
+		if M.state.buffers[buf] then
+			M.state.buffers[buf].sending = false
+		end
+		return
+	end
 
 	M.state.buffers[buf] = M.state.buffers[buf] or {}
 	M.state.buffers[buf].job_id = job_id
@@ -451,6 +515,22 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 			file:close()
 			
 			local lines = vim.split(content, "\n", { plain = true })
+			
+			local has_filepath = false
+			local cwd_line_idx = nil
+			for i, line in ipairs(lines) do
+				if line:match("^# filepath:") then
+					has_filepath = true
+				end
+				if line:match("^# cwd:") then
+					cwd_line_idx = i
+				end
+			end
+			
+			if not has_filepath and cwd_line_idx then
+				table.insert(lines, cwd_line_idx + 1, "# filepath: " .. file_path)
+			end
+			
 			vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 			loaded_from_file = true
 			logger.info("chat", "Loaded chat from " .. file_path)
@@ -459,6 +539,8 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 			if not last_line:match("^🗨:") then
 				vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
 			end
+			
+			save_buffer_to_file(buf, thread_id, true)
 		end
 	end
 	
@@ -466,11 +548,15 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 		local topic_line = topic or "New Chat"
 		
 		local initial_lines = {}
+		table.insert(initial_lines, "# topic: " .. topic_line)
+		table.insert(initial_lines, "")
 		if thread_id then
 			table.insert(initial_lines, "# thread: https://ampcode.com/threads/" .. thread_id)
 		end
-		table.insert(initial_lines, "# topic: " .. topic_line)
 		table.insert(initial_lines, "# cwd: " .. working_dir)
+		if file_path then
+			table.insert(initial_lines, "# filepath: " .. file_path)
+		end
 		table.insert(initial_lines, "")
 		table.insert(initial_lines, "---")
 		table.insert(initial_lines, "")

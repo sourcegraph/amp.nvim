@@ -54,6 +54,8 @@ function M.apply(user_config)
 		end
 	end
 
+	config.thread_storage_dir = vim.fn.expand(config.thread_storage_dir)
+
 	M.validate(config)
 	return config
 end
