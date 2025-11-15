@@ -19,6 +19,17 @@ local function get_chat_file_path(thread_id)
 	return storage_dir .. "/" .. thread_id .. ".md"
 end
 
+local function normalize_path(path)
+	if not path then
+		return nil
+	end
+	local home = vim.fn.expand("~")
+	if path:sub(1, #home) == home then
+		return "~" .. path:sub(#home + 1)
+	end
+	return path
+end
+
 local save_timers = {}
 
 local function save_buffer_to_file(buf, thread_id, immediate)
@@ -364,9 +375,19 @@ function M.send_message(buf, passed_thread_id)
 
 				if exit_code == 0 then
 					if not thread_id then
-						-- Get the most recent thread (first line of output)
-						local list_output = vim.fn.system({ "amp", "threads", "list", "--limit", "1" })
-						local new_thread_id = list_output:match("(T%-[a-f0-9%-]+)")
+						-- Get the most recent thread from the list
+						local list_output = vim.fn.system({ "amp", "threads", "list" })
+						logger.info("chat", "amp threads list output: " .. list_output)
+						
+						-- The output is a table, get the first thread ID from the second line (skip header)
+						local lines = vim.split(list_output, "\n", { plain = true })
+						local new_thread_id = nil
+						for i = 3, #lines do -- Skip header and separator line
+							new_thread_id = lines[i]:match("(T%-[a-f0-9%-]+)")
+							if new_thread_id then
+								break
+							end
+						end
 						
 						if new_thread_id then
 							logger.info("chat", "Extracted thread ID from amp threads list: '" .. new_thread_id .. "'")
@@ -382,11 +403,18 @@ function M.send_message(buf, passed_thread_id)
 							
 							local new_file_path = get_chat_file_path(new_thread_id)
 							
-							local lines = vim.api.nvim_buf_get_lines(buf, 0, 10, false)
+							local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+							logger.info("chat", "Buffer has " .. #lines .. " lines before inserting metadata")
+							for i = 1, math.min(10, #lines) do
+								logger.info("chat", "Line " .. (i-1) .. ": " .. lines[i])
+							end
+							
 							local has_filepath = false
 							local has_url = false
 							local filepath_line_idx = nil
 							local url_line_idx = nil
+							local cwd_line_idx = nil
+							local topic_line_idx = nil
 							
 							for i, line in ipairs(lines) do
 								if line:match("^# filepath:") then
@@ -397,30 +425,40 @@ function M.send_message(buf, passed_thread_id)
 									has_url = true
 									url_line_idx = i - 1
 								end
+								if line:match("^# cwd:") then
+									cwd_line_idx = i - 1
+								end
+								if line:match("^# topic:") then
+									topic_line_idx = i - 1
+								end
 							end
 							
-							if has_filepath and new_file_path then
-								vim.api.nvim_buf_set_lines(buf, filepath_line_idx, filepath_line_idx + 1, false, { "# filepath: " .. new_file_path })
-							elseif new_file_path then
-								local insert_line = 0
-								for i, line in ipairs(lines) do
-									if line:match("^# cwd:") then
-										insert_line = i
-										break
-									end
+							logger.info("chat", "Indices - topic: " .. tostring(topic_line_idx) .. ", thread: " .. tostring(url_line_idx) .. ", cwd: " .. tostring(cwd_line_idx) .. ", filepath: " .. tostring(filepath_line_idx))
+							
+							-- Add thread URL after topic first (higher in file)
+							if not has_url and topic_line_idx then
+								-- Insert after "# topic: ..." and the blank line
+								-- Structure: topic (line 0), blank (line 1), insert here (line 2)
+								vim.api.nvim_buf_set_lines(buf, topic_line_idx + 2, topic_line_idx + 2, false, { "# thread: " .. thread_url })
+								logger.info("chat", "Added thread URL line at line " .. (topic_line_idx + 2))
+								-- Update cwd_line_idx since we inserted a line above it
+								if cwd_line_idx then
+									cwd_line_idx = cwd_line_idx + 1
 								end
-								vim.api.nvim_buf_set_lines(buf, insert_line, insert_line, false, { "# filepath: " .. new_file_path })
+							elseif has_url and url_line_idx then
+								vim.api.nvim_buf_set_lines(buf, url_line_idx, url_line_idx + 1, false, { "# thread: " .. thread_url })
+								logger.info("chat", "Updated thread URL line at line " .. url_line_idx)
 							end
 							
-							if not has_url then
-								local insert_line = 0
-								for i, line in ipairs(lines) do
-									if line:match("^# topic:") then
-										insert_line = i + 1
-										break
-									end
-								end
-								vim.api.nvim_buf_set_lines(buf, insert_line, insert_line, false, { "# thread: " .. thread_url })
+							-- Then add filepath after cwd (lower in file)
+							if not has_filepath and cwd_line_idx and new_file_path then
+								local normalized_path = normalize_path(new_file_path)
+								vim.api.nvim_buf_set_lines(buf, cwd_line_idx + 1, cwd_line_idx + 1, false, { "# filepath: " .. normalized_path })
+								logger.info("chat", "Added filepath line after cwd at line " .. (cwd_line_idx + 1))
+							elseif has_filepath and filepath_line_idx and new_file_path then
+								local normalized_path = normalize_path(new_file_path)
+								vim.api.nvim_buf_set_lines(buf, filepath_line_idx, filepath_line_idx + 1, false, { "# filepath: " .. normalized_path })
+								logger.info("chat", "Updated filepath line at line " .. filepath_line_idx)
 							end
 							
 							save_buffer_to_file(buf, new_thread_id, true)
@@ -553,9 +591,9 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 		if thread_id then
 			table.insert(initial_lines, "# thread: https://ampcode.com/threads/" .. thread_id)
 		end
-		table.insert(initial_lines, "# cwd: " .. working_dir)
+		table.insert(initial_lines, "# cwd: " .. normalize_path(working_dir))
 		if file_path then
-			table.insert(initial_lines, "# filepath: " .. file_path)
+			table.insert(initial_lines, "# filepath: " .. normalize_path(file_path))
 		end
 		table.insert(initial_lines, "")
 		table.insert(initial_lines, "---")
