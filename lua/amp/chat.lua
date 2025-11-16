@@ -268,12 +268,17 @@ local function get_user_input_range(buf)
 end
 
 local function get_working_dir_from_buffer(buf)
-	local lines = vim.api.nvim_buf_get_lines(buf, 0, 10, false)
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	
 	for _, line in ipairs(lines) do
+		if line == "---" then
+			break
+		end
 		local cwd_match = line:match("^# cwd: (.+)$")
 		if cwd_match then
-			return vim.fn.expand(cwd_match)
+			local expanded = vim.fn.expand(cwd_match)
+			local abs = vim.fn.fnamemodify(expanded, ":p")
+			return abs
 		end
 	end
 	
@@ -392,7 +397,12 @@ function M.send_message(buf, passed_thread_id)
 	
 	logger.info("chat", "send_message called with thread_id: " .. (thread_id or "nil"))
 	
-	local working_dir = get_working_dir_from_buffer(buf) or (M.state.buffers[buf] and M.state.buffers[buf].working_dir) or vim.fn.getcwd()
+	-- Always re-read working_dir from buffer to respect user changes
+	local working_dir = get_working_dir_from_buffer(buf) or vim.fn.getcwd()
+	
+	-- Update state with the current working directory
+	M.state.buffers[buf] = M.state.buffers[buf] or {}
+	M.state.buffers[buf].working_dir = working_dir
 	
 	local start_line, end_line = get_user_input_range(buf)
 
@@ -419,7 +429,6 @@ function M.send_message(buf, passed_thread_id)
 		return
 	end
 
-	M.state.buffers[buf] = M.state.buffers[buf] or {}
 	M.state.buffers[buf].sending = true
 	
 	save_buffer_to_file(buf, thread_id, true)
@@ -476,9 +485,51 @@ function M.send_message(buf, passed_thread_id)
 			local cleaned_data = {}
 			for _, line in ipairs(data) do
 				local cleaned_line = strip_ansi_codes(line)
+				-- Keep all lines including empty ones to preserve formatting
+				table.insert(cleaned_data, cleaned_line)
+				table.insert(response_lines, cleaned_line)
+			end
+
+			if #cleaned_data > 0 then
+				local current_line_count = vim.api.nvim_buf_line_count(buf)
+				vim.api.nvim_buf_set_lines(buf, current_line_count, current_line_count, false, cleaned_data)
+
+				local win = vim.fn.bufwinid(buf)
+				if win ~= -1 then
+					local new_line_count = vim.api.nvim_buf_line_count(buf)
+					vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
+				end
+				
+				local id_for_save = thread_id or (M.state.buffers[buf] and M.state.buffers[buf].thread_id)
+				if id_for_save then
+					save_buffer_to_file(buf, id_for_save)
+				end
+			end
+		end)
+	end
+	
+	job_opts.on_stderr = function(_, data)
+		if not data then
+			return
+		end
+
+		vim.schedule(function()
+			if not vim.api.nvim_buf_is_valid(buf) then
+				return
+			end
+
+			vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+
+			local cleaned_data = {}
+			for _, line in ipairs(data) do
+				local cleaned_line = strip_ansi_codes(line)
+				-- Keep all lines including empty ones to preserve formatting
+				table.insert(cleaned_data, cleaned_line)
+				table.insert(response_lines, cleaned_line)
+				
+				-- Also log for debugging
 				if cleaned_line ~= "" then
-					table.insert(cleaned_data, cleaned_line)
-					table.insert(response_lines, cleaned_line)
+					logger.debug("chat", "Amp CLI stderr: " .. cleaned_line)
 				end
 			end
 
@@ -492,21 +543,12 @@ function M.send_message(buf, passed_thread_id)
 					vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
 				end
 				
-				save_buffer_to_file(buf, thread_id)
+				local id_for_save = thread_id or (M.state.buffers[buf] and M.state.buffers[buf].thread_id)
+				if id_for_save then
+					save_buffer_to_file(buf, id_for_save)
+				end
 			end
 		end)
-	end
-	
-	job_opts.on_stderr = function(_, data)
-		if data and #data > 0 then
-			vim.schedule(function()
-				for _, line in ipairs(data) do
-					if line ~= "" then
-						logger.error("chat", "Amp CLI: " .. line)
-					end
-				end
-			end)
-		end
 	end
 	
 	job_opts.on_exit = function(_, exit_code)
@@ -626,7 +668,10 @@ function M.send_message(buf, passed_thread_id)
 					end
 
 					local current_thread_id = thread_id or (M.state.buffers[buf] and M.state.buffers[buf].thread_id)
+					
+					-- Always save buffer immediately on exit to ensure all output is captured
 					if current_thread_id then
+						save_buffer_to_file(buf, current_thread_id, true)
 						sync_metadata(buf, current_thread_id)
 					end
 
@@ -844,6 +889,12 @@ function M.close_chat_buffer(buf)
 			state.spinner_timer:stop()
 			state.spinner_timer:close()
 		end
+	end
+	
+	if save_timers[buf] then
+		save_timers[buf]:stop()
+		save_timers[buf]:close()
+		save_timers[buf] = nil
 	end
 
 	M.state.buffers[buf] = nil
