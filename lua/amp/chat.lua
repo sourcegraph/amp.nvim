@@ -91,6 +91,49 @@ local function strip_ansi_codes(str)
 		:gsub("\r", "")
 end
 
+local function parse_stream_json_line(line)
+	if not line or line == "" then
+		return nil
+	end
+	
+	local ok, parsed = pcall(vim.json.decode, line)
+	if not ok then
+		return nil
+	end
+	
+	if not parsed then
+		return nil
+	end
+	
+	-- Handle assistant messages (thinking)
+	if parsed.type == "assistant" and parsed.message then
+		if parsed.message.content then
+			local text_parts = {}
+			for _, content_block in ipairs(parsed.message.content) do
+				if content_block.type == "text" and content_block.text then
+					table.insert(text_parts, content_block.text)
+				end
+			end
+			if #text_parts > 0 then
+				return "💭 " .. table.concat(text_parts, "\n")
+			end
+		end
+	end
+	
+	-- Handle result messages
+	if parsed.type == "result" and parsed.result then
+		return "✅ " .. vim.inspect(parsed.result)
+	end
+	
+	-- Handle system messages
+	if parsed.type == "system" then
+		local msg = parsed.message or parsed.text or vim.inspect(parsed)
+		return "⚙️ " .. msg
+	end
+	
+	return nil
+end
+
 local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
 local function start_spinner(buf)
 	local frame_idx = 1
@@ -250,6 +293,10 @@ local function setup_buffer_keymaps(buf, thread_id)
 	vim.keymap.set("n", "i", function()
 		M.enter_input_mode(buf)
 	end, vim.tbl_extend("force", opts, { desc = "Enter input mode" }))
+	
+	vim.keymap.set("n", "<C-a>", function()
+		M.toggle_auto_scroll(buf)
+	end, vim.tbl_extend("force", opts, { desc = "Toggle auto-scroll" }))
 end
 
 local function get_user_input_range(buf)
@@ -314,36 +361,57 @@ local function get_topic_from_buffer(buf)
 	return nil
 end
 
-local function get_tools_list_metadata()
-	local output = vim.fn.system({ "amp", "tools", "list" })
-	if vim.v.shell_error == 0 then
-		local lines = vim.split(output, "\n", { plain = true })
-		local tools = {}
-		for _, line in ipairs(lines) do
-			local trimmed = line:match("^%s*(.-)%s*$")
-			if trimmed and trimmed ~= "" then
-				table.insert(tools, trimmed)
-			end
-		end
-		
-		local result_lines = {}
-		for i = 1, #tools, 5 do
-			local chunk = {}
-			for j = i, math.min(i + 4, #tools) do
-				table.insert(chunk, tools[j])
-			end
-			table.insert(result_lines, table.concat(chunk, ", "))
-		end
-		
-		return result_lines
+
+
+local function get_cache_path(working_dir)
+	local hash = vim.fn.sha256(working_dir)
+	return "/tmp/amp_agents_cache_" .. hash .. ".txt"
+end
+
+local function read_agents_cache(working_dir)
+	local cache_path = get_cache_path(working_dir)
+	local file = io.open(cache_path, "r")
+	if not file then
+		return nil
 	end
-	logger.warn("chat", "Failed to fetch tools list")
-	return { "Error fetching tools" }
+	
+	local content = file:read("*all")
+	file:close()
+	
+	if content == "" then
+		return {}
+	end
+	
+	local agents_files = {}
+	for line in content:gmatch("[^\n]+") do
+		table.insert(agents_files, line)
+	end
+	return agents_files
+end
+
+local function write_agents_cache(working_dir, agents_files)
+	local cache_path = get_cache_path(working_dir)
+	local file = io.open(cache_path, "w")
+	if not file then
+		logger.warn("chat", "Failed to write agents cache to " .. cache_path)
+		return
+	end
+	
+	file:write(table.concat(agents_files, "\n"))
+	file:close()
+	logger.debug("chat", "Wrote agents cache to " .. cache_path)
 end
 
 local function find_agents_files(working_dir)
 	if not working_dir or vim.fn.isdirectory(working_dir) == 0 then
 		return {}
+	end
+	
+	-- Try to read from cache first
+	local cached = read_agents_cache(working_dir)
+	if cached then
+		logger.debug("chat", "Using cached agents files for " .. working_dir)
+		return cached
 	end
 	
 	local agents_files = {}
@@ -363,7 +431,16 @@ local function find_agents_files(working_dir)
 		end
 	end
 	
+	-- Write to cache
+	write_agents_cache(working_dir, agents_files)
+	
 	return agents_files
+end
+
+local function clear_agents_cache(working_dir)
+	local cache_path = get_cache_path(working_dir)
+	os.remove(cache_path)
+	logger.debug("chat", "Cleared agents cache for " .. working_dir)
 end
 
 local function get_agents_files_metadata(working_dir)
@@ -377,6 +454,35 @@ local function get_agents_files_metadata(working_dir)
 	end
 	
 	return metadata_lines
+end
+
+local function get_thread_stats(thread_id)
+	if not thread_id then
+		return nil
+	end
+	
+	-- Get thread info from list command
+	local list_output = vim.fn.system({ "amp", "threads", "list" })
+	if vim.v.shell_error ~= 0 then
+		return nil
+	end
+	
+	-- Parse the table output to find our thread
+	local lines = vim.split(list_output, "\n", { plain = true })
+	for i = 3, #lines do
+		if lines[i]:match(thread_id) then
+			-- Extract message count from the line
+			-- Format: Title  Last Updated  Visibility  Messages  Thread ID
+			local message_count = lines[i]:match("(%d+)%s+T%-")
+			if message_count then
+				return {
+					messages = tonumber(message_count),
+				}
+			end
+		end
+	end
+	
+	return nil
 end
 
 local function sync_metadata(buf, thread_id)
@@ -417,41 +523,43 @@ local function sync_metadata(buf, thread_id)
 		end
 	end
 	
-	-- Refresh tools list
-	logger.info("chat", "Refreshing tools list")
-	local tools_lines = get_tools_list_metadata()
-	local lines = vim.api.nvim_buf_get_lines(buf, 0, 50, false)
-	
-	local tools_start = nil
-	local tools_end = nil
-	for i, line in ipairs(lines) do
-		if line:match("^# tools:") then
-			tools_start = i - 1
-			tools_end = i - 1
-			for j = i, #lines do
-				if lines[j]:match("^# tools:") then
-					tools_end = j - 1
-				else
+	-- Update thread stats
+	logger.info("chat", "Updating thread statistics")
+	local stats = get_thread_stats(thread_id)
+	if stats then
+		local lines_local = vim.api.nvim_buf_get_lines(buf, 0, 20, false)
+		local stats_line_idx = nil
+		
+		for i, line in ipairs(lines_local) do
+			if line:match("^# stats:") then
+				stats_line_idx = i - 1
+				break
+			end
+		end
+		
+		local stats_text = "# stats: " .. stats.messages .. " messages"
+		
+		if stats_line_idx then
+			vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+			vim.api.nvim_buf_set_lines(buf, stats_line_idx, stats_line_idx + 1, false, { stats_text })
+			logger.info("chat", "Updated stats line")
+		else
+			-- Add stats after visibility
+			for i, line in ipairs(lines_local) do
+				if line:match("^# visibility:") then
+					vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+					vim.api.nvim_buf_set_lines(buf, i, i, false, { stats_text })
+					logger.info("chat", "Added stats line after visibility")
 					break
 				end
 			end
-			break
 		end
-	end
-	
-	if tools_start then
-		vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-		local formatted_tools = {}
-		for _, tool_line in ipairs(tools_lines) do
-			table.insert(formatted_tools, "# tools: " .. tool_line)
-		end
-		vim.api.nvim_buf_set_lines(buf, tools_start, tools_end + 1, false, formatted_tools)
-		logger.info("chat", "Tools list refreshed")
 	end
 	
 	-- Refresh agents files list
 	logger.info("chat", "Refreshing agents files list")
 	local working_dir = get_working_dir_from_buffer(buf) or vim.fn.getcwd()
+	clear_agents_cache(working_dir)  -- Clear cache to force re-scan
 	local agents_lines = get_agents_files_metadata(working_dir)
 	
 	-- Find and replace the agents files section
@@ -478,20 +586,12 @@ local function sync_metadata(buf, thread_id)
 		vim.api.nvim_buf_set_lines(buf, agents_start, agents_end + 1, false, agents_lines)
 		logger.info("chat", "Agents files list refreshed")
 	elseif #agents_lines > 0 then
-		-- Insert agents files after tools section
+		-- Insert agents files after visibility section
 		for i, line in ipairs(lines) do
-			if line:match("^# tools:") then
-				local insert_pos = i
-				for j = i + 1, #lines do
-					if lines[j]:match("^# tools:") then
-						insert_pos = j
-					else
-						break
-					end
-				end
+			if line:match("^# visibility:") then
 				vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
 				for idx, agent_line in ipairs(agents_lines) do
-					vim.api.nvim_buf_set_lines(buf, insert_pos + idx - 1, insert_pos + idx - 1, false, { agent_line })
+					vim.api.nvim_buf_set_lines(buf, i + idx - 1, i + idx - 1, false, { agent_line })
 				end
 				logger.info("chat", "Agents files list added")
 				break
@@ -528,7 +628,25 @@ end
 
 function M.send_message(buf, passed_thread_id)
 	if M.state.buffers[buf] and M.state.buffers[buf].sending then
-		vim.notify("⚠️  Message already in progress, please wait...", vim.log.levels.WARN)
+		-- Queue the message instead of rejecting it
+		local start_line, end_line = get_user_input_range(buf)
+		if start_line then
+			local message_lines = vim.api.nvim_buf_get_lines(buf, start_line, end_line, false)
+			local message = table.concat(message_lines, "\n"):gsub("^%s*(.-)%s*$", "%1")
+			
+			if message and message ~= "" then
+				M.state.buffers[buf].queued_messages = M.state.buffers[buf].queued_messages or {}
+				table.insert(M.state.buffers[buf].queued_messages, message)
+				
+				-- Clear the input area
+				vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+				vim.api.nvim_buf_set_lines(buf, start_line - 1, end_line, false, { "🗨:", "" })
+				
+				vim.notify("📋 Message queued (" .. #M.state.buffers[buf].queued_messages .. " in queue)", vim.log.levels.INFO)
+			else
+				vim.notify("⚠️  Message already in progress, please wait...", vim.log.levels.WARN)
+			end
+		end
 		return
 	end
 
@@ -583,14 +701,38 @@ function M.send_message(buf, passed_thread_id)
 
 	M.state.buffers[buf].sending = true
 	
+	-- Sync metadata immediately if we have a thread_id
+	if thread_id then
+		sync_metadata(buf, thread_id)
+	end
+	
 	save_buffer_to_file(buf, thread_id, true)
 
 	vim.notify("⏳ Sending message to Amp...", vim.log.levels.INFO)
 
 	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+	-- Add agent response area and immediately add a new input section for the next message
 	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🦜:[amp]", "" })
+	
+	-- Store the position where we'll add the next input separator after the agent response
+	local agent_response_line = vim.api.nvim_buf_line_count(buf)
 
 	local spinner_timer = start_spinner(buf)
+	
+	-- Immediately add a new input separator so the user can start typing the next message
+	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
+	
+	-- Initialize auto-scroll state (default: enabled to follow agent output)
+	M.state.buffers[buf].auto_scroll = M.state.buffers[buf].auto_scroll == nil and true or M.state.buffers[buf].auto_scroll
+	
+	-- Scroll to show the agent response area (not the new input area)
+	local win = vim.fn.bufwinid(buf)
+	if win ~= -1 then
+		vim.api.nvim_win_set_cursor(win, { agent_response_line, 0 })
+	end
+	
+	-- Add status line after the agent marker
+	vim.api.nvim_buf_set_lines(buf, agent_response_line, agent_response_line, false, { "⏳ Starting..." })
 
 	local amp = require("amp")
 	local thread_storage_dir = amp.state.config.thread_storage_dir
@@ -598,33 +740,85 @@ function M.send_message(buf, passed_thread_id)
 	local cmd
 	local job_opts = {
 		cwd = working_dir,
-		pty = true,
-		width = 120,
-		height = 40,
+		-- Disable PTY to prevent output buffering and enable true streaming
+		pty = false,
 	}
 	
 	if thread_id then
-		cmd = { "amp", "threads", "continue", thread_id, "--execute", message }
+		cmd = { "amp", "threads", "continue", thread_id }
+		if amp.state.config.use_stream_json then
+			table.insert(cmd, "--stream-json")
+		end
 		if amp.state.config.dangerously_allow_all then
 			table.insert(cmd, "--dangerously-allow-all")
 		end
+		table.insert(cmd, "--execute")
+		table.insert(cmd, message)
 	else
-		cmd = { "amp", "--execute", message }
+		cmd = { "amp" }
+		if amp.state.config.use_stream_json then
+			table.insert(cmd, "--stream-json")
+		end
 		if amp.state.config.dangerously_allow_all then
 			table.insert(cmd, "--dangerously-allow-all")
 		end
+		table.insert(cmd, "--execute")
+		table.insert(cmd, message)
 		job_opts.env = { AMP_THREAD_STORAGE_DIR = thread_storage_dir }
 	end
 
 	local response_lines = {}
 	local timeout_timer = nil
 	local stdin_written = false
+	local job_id = nil
 
 	logger.info("chat", "Starting job with command: " .. vim.inspect(cmd))
+	logger.info("chat", "Full command string: " .. table.concat(cmd, " "))
+	
+	local function has_meaningful_data(data)
+		if not data then return false end
+		for _, s in ipairs(data) do
+			if s and s ~= "" then return true end
+		end
+		return false
+	end
+
+	local function on_timeout()
+		vim.schedule(function()
+			if M.state.buffers[buf] and M.state.buffers[buf].sending then
+				vim.fn.jobstop(job_id)
+				stop_spinner(buf, spinner_timer)
+				if M.state.buffers[buf] then
+					M.state.buffers[buf].sending = false
+				end
+				vim.notify(
+					"⏱️  Thread response timed out after " 
+						.. (amp.state.config.thread_response_timeout / 1000) 
+						.. " seconds",
+					vim.log.levels.WARN
+				)
+			end
+			if timeout_timer then
+				timeout_timer:close()
+				timeout_timer = nil
+			end
+		end)
+	end
+
+	local function reset_timeout()
+		if timeout_timer and not vim.loop.is_closing(timeout_timer) then
+			timeout_timer:stop()
+			timeout_timer:start(amp.state.config.thread_response_timeout, 0, on_timeout)
+		end
+	end
 	
 	job_opts.on_stdout = function(_, data)
 		if not data then
 			return
+		end
+
+		if has_meaningful_data(data) then
+			reset_timeout()
 		end
 
 		vim.schedule(function()
@@ -636,20 +830,43 @@ function M.send_message(buf, passed_thread_id)
 
 			local cleaned_data = {}
 			for _, line in ipairs(data) do
-				local cleaned_line = strip_ansi_codes(line)
-				-- Keep all lines including empty ones to preserve formatting
-				table.insert(cleaned_data, cleaned_line)
-				table.insert(response_lines, cleaned_line)
+				if amp.state.config.use_stream_json then
+					logger.debug("chat", "stdout raw line: " .. line)
+					local text = parse_stream_json_line(line)
+					if text then
+						logger.debug("chat", "stdout parsed text: " .. text)
+						-- Split multi-line text into separate lines for buffer insertion
+						local text_lines = vim.split(text, "\n", { plain = true })
+						for _, text_line in ipairs(text_lines) do
+							table.insert(cleaned_data, text_line)
+							table.insert(response_lines, text_line)
+						end
+					end
+				else
+					local cleaned_line = strip_ansi_codes(line)
+					table.insert(cleaned_data, cleaned_line)
+					table.insert(response_lines, cleaned_line)
+				end
 			end
 
 			if #cleaned_data > 0 then
-				local current_line_count = vim.api.nvim_buf_line_count(buf)
-				vim.api.nvim_buf_set_lines(buf, current_line_count, current_line_count, false, cleaned_data)
+				-- Find the last 🗨: separator and insert before it
+				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+				local insert_pos = #lines
+				for i = #lines, 1, -1 do
+					if lines[i]:match("^🗨:") then
+						insert_pos = i - 1
+						break
+					end
+				end
+				
+				vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, cleaned_data)
 
 				local win = vim.fn.bufwinid(buf)
-				if win ~= -1 then
-					local new_line_count = vim.api.nvim_buf_line_count(buf)
-					vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
+				if win ~= -1 and M.state.buffers[buf] and M.state.buffers[buf].auto_scroll then
+					-- Auto-scroll to show streaming content if enabled
+					vim.api.nvim_win_set_cursor(win, { insert_pos + #cleaned_data, 0 })
+					vim.cmd("redraw")
 				end
 				
 				local id_for_save = thread_id or (M.state.buffers[buf] and M.state.buffers[buf].thread_id)
@@ -665,6 +882,10 @@ function M.send_message(buf, passed_thread_id)
 			return
 		end
 
+		if has_meaningful_data(data) then
+			reset_timeout()
+		end
+
 		vim.schedule(function()
 			if not vim.api.nvim_buf_is_valid(buf) then
 				return
@@ -674,25 +895,55 @@ function M.send_message(buf, passed_thread_id)
 
 			local cleaned_data = {}
 			for _, line in ipairs(data) do
-				local cleaned_line = strip_ansi_codes(line)
-				-- Keep all lines including empty ones to preserve formatting
-				table.insert(cleaned_data, cleaned_line)
-				table.insert(response_lines, cleaned_line)
-				
-				-- Also log for debugging
-				if cleaned_line ~= "" then
-					logger.debug("chat", "Amp CLI stderr: " .. cleaned_line)
+				if amp.state.config.use_stream_json then
+					logger.debug("chat", "stderr raw line: " .. line)
+					local text = parse_stream_json_line(line)
+					if text then
+						logger.debug("chat", "stderr parsed text: " .. text)
+						-- Split multi-line text into separate lines for buffer insertion
+						local text_lines = vim.split(text, "\n", { plain = true })
+						for _, text_line in ipairs(text_lines) do
+							table.insert(cleaned_data, text_line)
+							table.insert(response_lines, text_line)
+							if text_line ~= "" then
+								logger.debug("chat", "Amp CLI JSON text line: " .. text_line)
+							end
+						end
+					else
+						local cleaned_line = strip_ansi_codes(line)
+						if cleaned_line ~= "" then
+							logger.debug("chat", "Amp CLI stderr (non-JSON): " .. cleaned_line)
+						end
+					end
+				else
+					local cleaned_line = strip_ansi_codes(line)
+					table.insert(cleaned_data, cleaned_line)
+					table.insert(response_lines, cleaned_line)
+					
+					if cleaned_line ~= "" then
+						logger.debug("chat", "Amp CLI stderr: " .. cleaned_line)
+					end
 				end
 			end
 
 			if #cleaned_data > 0 then
-				local current_line_count = vim.api.nvim_buf_line_count(buf)
-				vim.api.nvim_buf_set_lines(buf, current_line_count, current_line_count, false, cleaned_data)
+				-- Find the last 🗨: separator and insert before it
+				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+				local insert_pos = #lines
+				for i = #lines, 1, -1 do
+					if lines[i]:match("^🗨:") then
+						insert_pos = i - 1
+						break
+					end
+				end
+				
+				vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, cleaned_data)
 
 				local win = vim.fn.bufwinid(buf)
-				if win ~= -1 then
-					local new_line_count = vim.api.nvim_buf_line_count(buf)
-					vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
+				if win ~= -1 and M.state.buffers[buf] and M.state.buffers[buf].auto_scroll then
+					-- Auto-scroll to show streaming content if enabled
+					vim.api.nvim_win_set_cursor(win, { insert_pos + #cleaned_data, 0 })
+					vim.cmd("redraw")
 				end
 				
 				local id_for_save = thread_id or (M.state.buffers[buf] and M.state.buffers[buf].thread_id)
@@ -704,11 +955,13 @@ function M.send_message(buf, passed_thread_id)
 	end
 	
 	job_opts.on_exit = function(_, exit_code)
+		logger.info("chat", "Job exited with code: " .. exit_code)
 		stop_spinner(buf, spinner_timer)
 
 		if timeout_timer then
 			timeout_timer:stop()
 			timeout_timer:close()
+			timeout_timer = nil
 		end
 
 		if M.state.buffers[buf] then
@@ -824,16 +1077,44 @@ function M.send_message(buf, passed_thread_id)
 					-- Always save buffer immediately on exit to ensure all output is captured
 					if current_thread_id then
 						save_buffer_to_file(buf, current_thread_id, true)
-						sync_metadata(buf, current_thread_id)
+						-- Don't sync metadata here since we already did it before sending
 					end
 
-					vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
-					vim.notify("✅ Message sent successfully", vim.log.levels.INFO)
-
-					local win = vim.fn.bufwinid(buf)
-					if win ~= -1 then
-						local total_lines = vim.api.nvim_buf_line_count(buf)
-						vim.api.nvim_win_set_cursor(win, { total_lines, 0 })
+					-- Check for queued messages and process them
+					local has_queued = M.state.buffers[buf] 
+						and M.state.buffers[buf].queued_messages 
+						and #M.state.buffers[buf].queued_messages > 0
+					
+					if has_queued then
+						local queued_message = table.remove(M.state.buffers[buf].queued_messages, 1)
+						local remaining = #M.state.buffers[buf].queued_messages
+						
+						-- Find the last 🗨: separator and replace the content after it
+						local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+						local separator_line = nil
+						for i = #lines, 1, -1 do
+							if lines[i]:match("^🗨:") then
+								separator_line = i
+								break
+							end
+						end
+						
+						if separator_line then
+							-- Replace content after separator with queued message
+							vim.api.nvim_buf_set_lines(buf, separator_line, -1, false, { queued_message, "" })
+						end
+						
+						vim.notify("✅ Message sent. Processing queued message (" .. remaining .. " remaining)...", vim.log.levels.INFO)
+						
+						-- Auto-send the queued message after a brief delay
+						vim.defer_fn(function()
+							if vim.api.nvim_buf_is_valid(buf) then
+								M.send_message(buf, current_thread_id)
+							end
+						end, 100)
+					else
+						-- Don't add a new separator - we already added it immediately when sending
+						vim.notify("✅ Message sent successfully", vim.log.levels.INFO)
 					end
 				else
 					vim.notify("❌ Failed to send message (exit code: " .. exit_code .. ")", vim.log.levels.ERROR)
@@ -843,8 +1124,9 @@ function M.send_message(buf, passed_thread_id)
 	
 	job_opts.stdout_buffered = false
 	job_opts.stderr_buffered = false
+	job_opts.stdin = "null"
 	
-	local job_id = vim.fn.jobstart(cmd, job_opts)
+	job_id = vim.fn.jobstart(cmd, job_opts)
 	
 	if job_id <= 0 then
 		stop_spinner(buf, spinner_timer)
@@ -860,34 +1142,7 @@ function M.send_message(buf, passed_thread_id)
 	M.state.buffers[buf].job_id = job_id
 
 	timeout_timer = vim.loop.new_timer()
-	timeout_timer:start(amp.state.config.thread_response_timeout, 0, function()
-		vim.schedule(function()
-			if M.state.buffers[buf] and M.state.buffers[buf].sending then
-				vim.fn.jobstop(job_id)
-				stop_spinner(buf, spinner_timer)
-				
-				if M.state.buffers[buf] then
-					M.state.buffers[buf].sending = false
-				end
-				
-				vim.notify(
-					"⏱️  Thread response timed out after " 
-						.. (amp.state.config.thread_response_timeout / 1000) 
-						.. " seconds",
-					vim.log.levels.WARN
-				)
-				
-				if vim.api.nvim_buf_is_valid(buf) then
-					vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-					vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
-				end
-			end
-			
-			if timeout_timer then
-				timeout_timer:close()
-			end
-		end)
-	end)
+	timeout_timer:start(amp.state.config.thread_response_timeout, 0, on_timeout)
 end
 
 function M.enter_input_mode(buf)
@@ -917,11 +1172,9 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 			local lines = vim.split(content, "\n", { plain = true })
 			
 			local has_filepath = false
-			local has_tools = false
 			local has_agents = false
 			local cwd_line_idx = nil
 			local visibility_line_idx = nil
-			local tools_line_idx = nil
 			for i, line in ipairs(lines) do
 				if line:match("^# filepath:") then
 					has_filepath = true
@@ -931,10 +1184,6 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 				end
 				if line:match("^# visibility:") then
 					visibility_line_idx = i
-				end
-				if line:match("^# tools:") then
-					has_tools = true
-					tools_line_idx = i
 				end
 				if line:match("^# Agents File:") then
 					has_agents = true
@@ -946,27 +1195,28 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 				if visibility_line_idx then
 					visibility_line_idx = visibility_line_idx + 1
 				end
-				if tools_line_idx then
-					tools_line_idx = tools_line_idx + 1
-				end
 			end
 			
-			if not has_tools and visibility_line_idx then
-				local tools_list = get_tools_list_metadata()
-				for idx, tool_line in ipairs(tools_list) do
-					table.insert(lines, visibility_line_idx + idx, "# tools: " .. tool_line)
-				end
-				if tools_line_idx then
-					tools_line_idx = tools_line_idx + #tools_list
-				else
-					tools_line_idx = visibility_line_idx + #tools_list + 1
-				end
-			end
-			
-			if not has_agents and tools_line_idx then
+			if not has_agents and visibility_line_idx then
 				local agents_lines = get_agents_files_metadata(working_dir)
 				for j = #agents_lines, 1, -1 do
-					table.insert(lines, tools_line_idx + 1, agents_lines[j])
+					table.insert(lines, visibility_line_idx + 1, agents_lines[j])
+				end
+			end
+			
+			-- Add stats if not present
+			local has_stats = false
+			for _, line in ipairs(lines) do
+				if line:match("^# stats:") then
+					has_stats = true
+					break
+				end
+			end
+			
+			if not has_stats and thread_id and visibility_line_idx then
+				local stats = get_thread_stats(thread_id)
+				if stats then
+					table.insert(lines, visibility_line_idx + 1, "# stats: " .. stats.messages .. " messages")
 				end
 			end
 			
@@ -1001,11 +1251,6 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 					"# filepath: " .. normalize_path(file_path),
 					"# visibility: private # (public, unlisted, workspace, group)",
 				}
-				
-				local tools_list = get_tools_list_metadata()
-				for _, tool_line in ipairs(tools_list) do
-					table.insert(metadata, "# tools: " .. tool_line)
-				end
 				
 				-- Add agents files metadata
 				local agents_lines = get_agents_files_metadata(working_dir)
@@ -1050,11 +1295,6 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 				table.insert(initial_lines, "# filepath: " .. normalize_path(file_path))
 			end
 			table.insert(initial_lines, "# visibility: private # (public, unlisted, workspace, group)")
-			
-			local tools_list = get_tools_list_metadata()
-			for _, tool_line in ipairs(tools_list) do
-				table.insert(initial_lines, "# tools: " .. tool_line)
-			end
 			
 			-- Add agents files metadata
 			local agents_lines = get_agents_files_metadata(working_dir)
@@ -1117,6 +1357,16 @@ function M.close_chat_buffer(buf)
 	if vim.api.nvim_buf_is_valid(buf) then
 		vim.api.nvim_buf_delete(buf, { force = true })
 	end
+end
+
+function M.toggle_auto_scroll(buf)
+	if not M.state.buffers[buf] then
+		return
+	end
+	
+	M.state.buffers[buf].auto_scroll = not M.state.buffers[buf].auto_scroll
+	local status = M.state.buffers[buf].auto_scroll and "enabled" or "disabled"
+	vim.notify("Auto-scroll " .. status, vim.log.levels.INFO)
 end
 
 return M

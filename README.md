@@ -35,6 +35,7 @@ Install the plugin by adding this code to your lazy.vim config:
     thread_response_timeout = 300000,  -- 5 minutes in milliseconds (default)
     submit_key = "<C-g>",              -- Key to send messages (default)
     sync_metadata_key = "<C-s>",       -- Key to sync thread metadata (default)
+    use_stream_json = true,            -- Use --stream-json for real-time output (default: true)
   },
 }
 ```
@@ -241,6 +242,18 @@ Once in a chat buffer:
 - Press `q` in normal mode to close the chat buffer
 
 Messages and responses appear in the buffer in real-time, formatted in Markdown.
+
+### Streaming Mode
+
+By default, the plugin uses `--stream-json` mode which provides structured JSON output from the Amp CLI. This enables better parsing and handling of Claude's responses.
+
+You can disable this and use the traditional plain text mode by setting `use_stream_json = false` in your config:
+
+```lua
+require('amp').setup({
+  use_stream_json = false,  -- Use plain text output instead of JSON
+})
+```
 
 ### Thread Metadata
 
