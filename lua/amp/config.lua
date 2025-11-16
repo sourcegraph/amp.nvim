@@ -64,6 +64,21 @@ function M.apply(user_config)
 
 	config.thread_storage_dir = vim.fn.expand(config.thread_storage_dir)
 
+	if config.shortcuts and type(config.shortcuts) == "table" then
+		local normalized_shortcuts = {}
+		for i, shortcut in ipairs(config.shortcuts) do
+			if type(shortcut) == "table" and shortcut.name then
+				normalized_shortcuts[shortcut.name] = shortcut
+			end
+		end
+		for k, v in pairs(config.shortcuts) do
+			if type(k) == "string" then
+				normalized_shortcuts[k] = v
+			end
+		end
+		config.shortcuts = normalized_shortcuts
+	end
+
 	M.validate(config)
 	return config
 end

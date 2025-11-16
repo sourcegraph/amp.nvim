@@ -30,8 +30,14 @@ function M.expand_shortcuts(text)
 
 	for name, content in pairs(M.state.shortcuts) do
 		local pattern = "#" .. vim.pesc(name)
+		local replacement
+		if type(content) == "table" then
+			replacement = content.prompt or content.details or content.description or ""
+		else
+			replacement = content
+		end
 		local count
-		expanded, count = expanded:gsub(pattern, content)
+		expanded, count = expanded:gsub(pattern, replacement)
 		replacements_made = replacements_made + count
 	end
 

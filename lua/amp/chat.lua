@@ -199,6 +199,9 @@ local function setup_shortcuts_completion(buf)
 					local items = {}
 					for _, match in ipairs(matches) do
 						local preview = match.content
+						if type(preview) == "table" then
+							preview = preview.description or preview.prompt or preview.details or ""
+						end
 						if #preview > 50 then
 							preview = preview:sub(1, 47) .. "..."
 						end
@@ -323,12 +326,19 @@ local function get_tools_list_metadata()
 			end
 		end
 		
-		local count = #tools
-		local tools_list = table.concat(tools, ", ")
-		return "<details><summary>" .. count .. " tools available</summary>" .. tools_list .. "</details>"
+		local result_lines = {}
+		for i = 1, #tools, 5 do
+			local chunk = {}
+			for j = i, math.min(i + 4, #tools) do
+				table.insert(chunk, tools[j])
+			end
+			table.insert(result_lines, table.concat(chunk, ", "))
+		end
+		
+		return result_lines
 	end
 	logger.warn("chat", "Failed to fetch tools list")
-	return "<details><summary>Error fetching tools</summary></details>"
+	return { "Error fetching tools" }
 end
 
 local function find_agents_files(working_dir)
@@ -360,13 +370,10 @@ local function get_agents_files_metadata(working_dir)
 	local files = find_agents_files(working_dir)
 	local metadata_lines = {}
 	
-	table.insert(metadata_lines, "# Agents Files:")
 	if #files > 0 then
 		for _, file in ipairs(files) do
-			table.insert(metadata_lines, "# - " .. file)
+			table.insert(metadata_lines, "# Agents File: " .. file)
 		end
-	else
-		table.insert(metadata_lines, "# - (none found)")
 	end
 	
 	return metadata_lines
@@ -412,15 +419,34 @@ local function sync_metadata(buf, thread_id)
 	
 	-- Refresh tools list
 	logger.info("chat", "Refreshing tools list")
-	local tools = get_tools_list_metadata()
-	local lines = vim.api.nvim_buf_get_lines(buf, 0, 30, false)
+	local tools_lines = get_tools_list_metadata()
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, 50, false)
+	
+	local tools_start = nil
+	local tools_end = nil
 	for i, line in ipairs(lines) do
 		if line:match("^# tools:") then
-			vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-			vim.api.nvim_buf_set_lines(buf, i - 1, i, false, { "# tools: " .. tools })
-			logger.info("chat", "Tools list refreshed")
+			tools_start = i - 1
+			tools_end = i - 1
+			for j = i, #lines do
+				if lines[j]:match("^# tools:") then
+					tools_end = j - 1
+				else
+					break
+				end
+			end
 			break
 		end
+	end
+	
+	if tools_start then
+		vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+		local formatted_tools = {}
+		for _, tool_line in ipairs(tools_lines) do
+			table.insert(formatted_tools, "# tools: " .. tool_line)
+		end
+		vim.api.nvim_buf_set_lines(buf, tools_start, tools_end + 1, false, formatted_tools)
+		logger.info("chat", "Tools list refreshed")
 	end
 	
 	-- Refresh agents files list
@@ -429,17 +455,17 @@ local function sync_metadata(buf, thread_id)
 	local agents_lines = get_agents_files_metadata(working_dir)
 	
 	-- Find and replace the agents files section
-	lines = vim.api.nvim_buf_get_lines(buf, 0, 30, false)
+	lines = vim.api.nvim_buf_get_lines(buf, 0, 50, false)
 	local agents_start = nil
 	local agents_end = nil
 	
 	for i, line in ipairs(lines) do
-		if line:match("^# Agents Files:") then
+		if line:match("^# Agents File:") then
 			agents_start = i - 1
-			-- Find the end of the agents files section (next line that doesn't start with "# -" or is separator)
 			for j = i, #lines do
-				if not lines[j]:match("^# %-") and not lines[j]:match("^# Agents Files:") then
+				if lines[j]:match("^# Agents File:") then
 					agents_end = j - 1
+				else
 					break
 				end
 			end
@@ -449,8 +475,28 @@ local function sync_metadata(buf, thread_id)
 	
 	if agents_start then
 		vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-		vim.api.nvim_buf_set_lines(buf, agents_start, agents_end, false, agents_lines)
+		vim.api.nvim_buf_set_lines(buf, agents_start, agents_end + 1, false, agents_lines)
 		logger.info("chat", "Agents files list refreshed")
+	elseif #agents_lines > 0 then
+		-- Insert agents files after tools section
+		for i, line in ipairs(lines) do
+			if line:match("^# tools:") then
+				local insert_pos = i
+				for j = i + 1, #lines do
+					if lines[j]:match("^# tools:") then
+						insert_pos = j
+					else
+						break
+					end
+				end
+				vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+				for idx, agent_line in ipairs(agents_lines) do
+					vim.api.nvim_buf_set_lines(buf, insert_pos + idx - 1, insert_pos + idx - 1, false, { agent_line })
+				end
+				logger.info("chat", "Agents files list added")
+				break
+			end
+		end
 	end
 	
 	save_buffer_to_file(buf, thread_id, true)
@@ -890,7 +936,7 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 					has_tools = true
 					tools_line_idx = i
 				end
-				if line:match("^# Agents Files:") then
+				if line:match("^# Agents File:") then
 					has_agents = true
 				end
 			end
@@ -906,11 +952,14 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 			end
 			
 			if not has_tools and visibility_line_idx then
-				table.insert(lines, visibility_line_idx + 1, "# tools: " .. get_tools_list_metadata())
+				local tools_list = get_tools_list_metadata()
+				for idx, tool_line in ipairs(tools_list) do
+					table.insert(lines, visibility_line_idx + idx, "# tools: " .. tool_line)
+				end
 				if tools_line_idx then
-					tools_line_idx = tools_line_idx + 1
+					tools_line_idx = tools_line_idx + #tools_list
 				else
-					tools_line_idx = visibility_line_idx + 2
+					tools_line_idx = visibility_line_idx + #tools_list + 1
 				end
 			end
 			
@@ -951,8 +1000,12 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 					"# cwd: " .. normalize_path(working_dir),
 					"# filepath: " .. normalize_path(file_path),
 					"# visibility: private # (public, unlisted, workspace, group)",
-					"# tools: " .. get_tools_list_metadata(),
 				}
+				
+				local tools_list = get_tools_list_metadata()
+				for _, tool_line in ipairs(tools_list) do
+					table.insert(metadata, "# tools: " .. tool_line)
+				end
 				
 				-- Add agents files metadata
 				local agents_lines = get_agents_files_metadata(working_dir)
@@ -997,7 +1050,11 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 				table.insert(initial_lines, "# filepath: " .. normalize_path(file_path))
 			end
 			table.insert(initial_lines, "# visibility: private # (public, unlisted, workspace, group)")
-			table.insert(initial_lines, "# tools: " .. get_tools_list_metadata())
+			
+			local tools_list = get_tools_list_metadata()
+			for _, tool_line in ipairs(tools_list) do
+				table.insert(initial_lines, "# tools: " .. tool_line)
+			end
 			
 			-- Add agents files metadata
 			local agents_lines = get_agents_files_metadata(working_dir)

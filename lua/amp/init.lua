@@ -335,6 +335,11 @@ function M._create_commands()
 		local chat = require("amp.chat")
 		chat.sync_metadata_command()
 	end, { desc = "Sync thread metadata (visibility and topic) for current chat buffer" })
+
+	vim.api.nvim_create_user_command("AmpShortcuts", function()
+		local telescope = require("amp.telescope")
+		telescope.list_shortcuts()
+	end, { desc = "Browse and insert Amp shortcuts with Telescope" })
 end
 
 return M

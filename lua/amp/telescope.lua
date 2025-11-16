@@ -76,10 +76,13 @@ function M.list_threads(opts)
 
   local threads = parse_thread_list(output)
 
-  if #threads == 0 then
-    vim.notify("No threads found", vim.log.levels.INFO)
-    return
-  end
+  table.insert(threads, 1, {
+    title = "Create new thread",
+    last_updated = "",
+    visibility = "",
+    messages = "",
+    id = "__new__",
+  })
 
   local pickers = require("telescope.pickers")
   local finders = require("telescope.finders")
@@ -132,7 +135,11 @@ function M.list_threads(opts)
           local selection = action_state.get_selected_entry()
           if selection then
             local thread_id = selection.value.id
-            M.continue_thread(thread_id)
+            if thread_id == "__new__" then
+              M.new_thread()
+            else
+              M.continue_thread(thread_id)
+            end
           end
         end)
 
@@ -165,6 +172,101 @@ end
 function M.new_thread(initial_message)
   local chat = require("amp.chat")
   chat.open_chat_buffer(nil, initial_message)
+end
+
+function M.list_shortcuts(opts)
+  if not is_telescope_available() then
+    logger.error("telescope", "Telescope.nvim is not installed")
+    vim.notify("Telescope.nvim is required for this feature", vim.log.levels.ERROR)
+    return
+  end
+
+  opts = opts or {}
+
+  local shortcuts = require("amp.shortcuts")
+  local all_shortcuts = shortcuts.get_all()
+
+  local items = {}
+  for name, content in pairs(all_shortcuts) do
+    local item = {
+      name = name,
+      shortcut = "#" .. name,
+    }
+    
+    if type(content) == "table" then
+      item.description = content.description or ""
+      item.details = content.details or content.prompt or ""
+      item.prompt = content.prompt or ""
+    else
+      item.description = content
+      item.details = content
+      item.prompt = content
+    end
+    
+    table.insert(items, item)
+  end
+
+  table.sort(items, function(a, b)
+    return a.name < b.name
+  end)
+
+  if #items == 0 then
+    vim.notify("No shortcuts defined", vim.log.levels.INFO)
+    return
+  end
+
+  local pickers = require("telescope.pickers")
+  local finders = require("telescope.finders")
+  local conf = require("telescope.config").values
+  local actions = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+  local previewers = require("telescope.previewers")
+
+  pickers
+    .new(opts, {
+      prompt_title = "Amp Shortcuts",
+      finder = finders.new_table({
+        results = items,
+        entry_maker = function(entry)
+          return {
+            value = entry,
+            display = string.format("%-30s  %s", entry.shortcut, entry.description),
+            ordinal = entry.name .. " " .. entry.description,
+          }
+        end,
+      }),
+      sorter = conf.generic_sorter(opts),
+      previewer = previewers.new_buffer_previewer({
+        title = "Shortcut Details",
+        define_preview = function(self, entry)
+          local lines = {
+            "Shortcut: " .. entry.value.shortcut,
+            "Name: " .. entry.value.name,
+            "",
+            "Description:",
+            entry.value.description,
+            "",
+            "Details:",
+            entry.value.details,
+            "",
+            "Press <CR> to insert shortcut at cursor",
+          }
+          vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+        end,
+      }),
+      attach_mappings = function(prompt_bufnr)
+        actions.select_default:replace(function()
+          actions.close(prompt_bufnr)
+          local selection = action_state.get_selected_entry()
+          if selection then
+            local shortcut = selection.value.shortcut
+            vim.api.nvim_put({ shortcut }, "c", true, true)
+          end
+        end)
+        return true
+      end,
+    })
+    :find()
 end
 
 return M
