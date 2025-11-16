@@ -63,6 +63,9 @@ function M.setup(opts)
 
 	logger.setup(M.state.config)
 
+	local shortcuts = require("amp.shortcuts")
+	shortcuts.setup(M.state.config.shortcuts)
+
 	if M.state.config.auto_start then
 		M.start()
 	end
@@ -327,6 +330,11 @@ function M._create_commands()
 		local chat = require("amp.chat")
 		chat.open_chat_buffer(thread_id)
 	end, { nargs = 1, desc = "Open Amp chat buffer for a specific thread" })
+	
+	vim.api.nvim_create_user_command("AmpSaveMetadata", function()
+		local chat = require("amp.chat")
+		chat.sync_metadata_command()
+	end, { desc = "Sync thread metadata (visibility and topic) for current chat buffer" })
 end
 
 return M

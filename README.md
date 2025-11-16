@@ -32,7 +32,9 @@ Install the plugin by adding this code to your lazy.vim config:
   opts = { 
     auto_start = true, 
     log_level = "info",
-    thread_response_timeout = 300000  -- 5 minutes in milliseconds (default)
+    thread_response_timeout = 300000,  -- 5 minutes in milliseconds (default)
+    submit_key = "<C-g>",              -- Key to send messages (default)
+    sync_metadata_key = "<C-s>",       -- Key to sync thread metadata (default)
   },
 }
 ```
@@ -89,6 +91,46 @@ require('amp').setup({ auto_start = true, log_level = "info" })
 ```
 
 Once installed, run `amp --ide`.
+
+## Shortcuts
+
+Shortcuts allow you to define reusable prompts that can be quickly inserted using `#shortcut-name` syntax. When you type `#` in a chat buffer, you'll see autocomplete suggestions for all available shortcuts.
+
+### Configuration
+
+Define shortcuts in your nvim config:
+
+```lua
+require('amp').setup({
+  auto_start = true,
+  log_level = "info",
+  shortcuts = {
+    debug = "Please help me debug this issue. Show me step-by-step what's happening.",
+    review = "Please review this code for:\n- Security issues\n- Performance problems\n- Best practices\n- Potential bugs",
+    explain = "Please explain this code in detail, including what each part does and why.",
+    test = "Please write comprehensive tests for this code, including edge cases.",
+  }
+})
+```
+
+### Usage
+
+In any Amp chat buffer:
+1. Type `#` to see all available shortcuts with autocomplete
+2. Select a shortcut or continue typing to filter (e.g., `#debug`)
+3. The shortcut text will be inserted into your message
+4. Press `<C-g>` (or your configured `submit_key`) to send the message
+
+Example:
+```
+🗨:
+I'm getting an error in this function. #debug
+```
+
+When sent, this becomes:
+```
+I'm getting an error in this function. Please help me debug this issue. Show me step-by-step what's happening.
+```
 
 ### Healthcheck
 > Check the health of the plugin by running `:checkhealth amp` or to run all healthchecks run `:checkhealth`
@@ -192,18 +234,28 @@ Interact with Amp directly in Neovim buffers, similar to parrot.nvim. Type your 
 
 Once in a chat buffer:
 
-- Type your message after the `--- USER ---` separator
-- Press `<C-g>` in normal or insert mode to send the message
+- Type your message after the `🗨:` separator
+- Press `<C-g>` in normal or insert mode to send the message (configurable via `submit_key`)
+- Press `<C-s>` in normal or insert mode to sync metadata (visibility/topic) without sending a message (configurable via `sync_metadata_key`)
 - Press `i` in normal mode to jump to input mode
 - Press `q` in normal mode to close the chat buffer
 
 Messages and responses appear in the buffer in real-time, formatted in Markdown.
 
+### Thread Metadata
+
+At the top of each chat buffer, you can configure:
+
+- `# topic:` - The thread name/title
+- `# visibility:` - Thread visibility (`private`, `public`, `unlisted`, `workspace`, or `group`)
+
+Metadata is automatically synced when you send a message, or you can manually sync it anytime with `<C-s>`.
+
 ### Example Workflow
 
 1. Run `:AmpThreads` to browse your existing threads
 2. Select a thread with `<CR>` to open it in a chat buffer
-3. Type your message and press `<C-g>` to send
+3. Type your message and press `<C-g>` (or your configured `submit_key`) to send
 4. View Amp's response as it streams in
 5. Continue the conversation or press `q` to close
 
@@ -211,7 +263,7 @@ Alternatively, start a new conversation:
 
 1. Run `:AmpChat` to create a new thread
 2. Type your first message
-3. Press `<C-g>` to send and start the conversation
+3. Press `<C-g>` (or your configured `submit_key`) to send and start the conversation
 
 ## Feature Ideas
 

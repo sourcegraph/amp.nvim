@@ -6,6 +6,10 @@ M.defaults = {
 	log_level = "info",
 	thread_storage_dir = "/tmp",
 	thread_response_timeout = 300000,
+	shortcuts = {},
+	submit_key = "<C-g>",
+	sync_metadata_key = "<C-s>",
+	dangerously_allow_all = false,
 }
 
 function M.validate(config)
@@ -37,6 +41,10 @@ function M.validate(config)
 		type(config.thread_response_timeout) == "number" and config.thread_response_timeout > 0,
 		"thread_response_timeout must be a positive number (in milliseconds)"
 	)
+
+	assert(type(config.shortcuts) == "table", "shortcuts must be a table")
+
+	assert(type(config.dangerously_allow_all) == "boolean", "dangerously_allow_all must be a boolean")
 
 	return true
 end

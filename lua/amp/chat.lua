@@ -180,16 +180,65 @@ local function create_chat_buffer(thread_id, working_dir)
 	return buf
 end
 
+local function setup_shortcuts_completion(buf)
+	vim.api.nvim_create_autocmd({ "TextChangedI", "TextChangedP" }, {
+		buffer = buf,
+		callback = function()
+			local line = vim.api.nvim_get_current_line()
+			local col = vim.api.nvim_win_get_cursor(0)[2]
+			local before_cursor = line:sub(1, col)
+
+			local hash_pos = before_cursor:match(".*()#[%w_-]*$")
+			if hash_pos then
+				local prefix = before_cursor:sub(hash_pos + 1, col)
+
+				local shortcuts = require("amp.shortcuts")
+				local matches = shortcuts.get_matching_shortcuts(prefix)
+
+				if #matches > 0 then
+					local items = {}
+					for _, match in ipairs(matches) do
+						local preview = match.content
+						if #preview > 50 then
+							preview = preview:sub(1, 47) .. "..."
+						end
+						table.insert(items, {
+							word = "#" .. match.name,
+							abbr = "#" .. match.name,
+							menu = preview,
+							kind = "Shortcut",
+						})
+					end
+
+					vim.fn.complete(hash_pos, items)
+				end
+			end
+		end,
+	})
+end
+
 local function setup_buffer_keymaps(buf, thread_id)
 	local opts = { buffer = buf, silent = true, noremap = true }
+	
+	local amp = require("amp")
+	local submit_key = amp.state.config.submit_key or "<C-g>"
+	local sync_metadata_key = amp.state.config.sync_metadata_key or "<C-s>"
 
-	vim.keymap.set("n", "<C-g>", function()
+	vim.keymap.set("n", submit_key, function()
 		M.send_message(buf, thread_id)
 	end, vim.tbl_extend("force", opts, { desc = "Send message to Amp" }))
 
-	vim.keymap.set("i", "<C-g>", function()
+	vim.keymap.set("i", submit_key, function()
 		M.send_message(buf, thread_id)
 	end, vim.tbl_extend("force", opts, { desc = "Send message to Amp" }))
+	
+	vim.keymap.set("n", sync_metadata_key, function()
+		sync_metadata(buf, thread_id)
+	end, vim.tbl_extend("force", opts, { desc = "Sync thread metadata" }))
+	
+	vim.keymap.set("i", sync_metadata_key, function()
+		sync_metadata(buf, thread_id)
+	end, vim.tbl_extend("force", opts, { desc = "Sync thread metadata" }))
 
 	vim.keymap.set("n", "q", function()
 		M.close_chat_buffer(buf)
@@ -229,6 +278,95 @@ local function get_working_dir_from_buffer(buf)
 	end
 	
 	return nil
+end
+
+local function get_visibility_from_buffer(buf)
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, 15, false)
+	
+	for _, line in ipairs(lines) do
+		local visibility_match = line:match("^# visibility:%s*(%S+)")
+		if visibility_match then
+			return visibility_match:lower()
+		end
+	end
+	
+	return "private"
+end
+
+local function get_topic_from_buffer(buf)
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, 10, false)
+	
+	for _, line in ipairs(lines) do
+		local topic_match = line:match("^# topic: (.+)$")
+		if topic_match and topic_match ~= "New Chat" then
+			return topic_match
+		end
+	end
+	
+	return nil
+end
+
+local function sync_metadata(buf, thread_id)
+	if not thread_id then
+		thread_id = M.state.buffers[buf] and M.state.buffers[buf].thread_id
+	end
+	
+	if not thread_id then
+		vim.notify("⚠️  No thread ID found, cannot sync metadata", vim.log.levels.WARN)
+		return
+	end
+	
+	local visibility = get_visibility_from_buffer(buf)
+	logger.info("chat", "Syncing metadata - visibility: " .. visibility)
+	
+	local share_cmd = { "amp", "threads", "share", thread_id, "--visibility", visibility }
+	vim.fn.system(share_cmd)
+	if vim.v.shell_error == 0 then
+		logger.info("chat", "Thread visibility set to " .. visibility)
+		vim.notify("✅ Metadata synced (visibility: " .. visibility .. ")", vim.log.levels.INFO)
+		if M.state.buffers[buf] then
+			M.state.buffers[buf].last_visibility = visibility
+		end
+	else
+		logger.error("chat", "Failed to set thread visibility")
+		vim.notify("❌ Failed to sync metadata", vim.log.levels.ERROR)
+	end
+	
+	local topic = get_topic_from_buffer(buf)
+	if topic then
+		logger.info("chat", "Setting thread name to: " .. topic)
+		local rename_cmd = { "amp", "threads", "rename", thread_id, topic }
+		vim.fn.system(rename_cmd)
+		if vim.v.shell_error == 0 then
+			logger.info("chat", "Thread name updated")
+		else
+			logger.error("chat", "Failed to rename thread")
+		end
+	end
+end
+
+function M.sync_metadata_command()
+	local buf = vim.api.nvim_get_current_buf()
+	
+	if not vim.api.nvim_buf_get_var(buf, "amp_chat_buffer") then
+		vim.notify("⚠️  This is not an Amp chat buffer", vim.log.levels.WARN)
+		return
+	end
+	
+	local thread_id = M.state.buffers[buf] and M.state.buffers[buf].thread_id
+	
+	if not thread_id then
+		local lines = vim.api.nvim_buf_get_lines(buf, 0, 20, false)
+		for _, line in ipairs(lines) do
+			local id = line:match("^# thread: https://ampcode%.com/threads/(T%-[a-f0-9%-]+)")
+			if id then
+				thread_id = id
+				break
+			end
+		end
+	end
+	
+	sync_metadata(buf, thread_id)
 end
 
 function M.send_message(buf, passed_thread_id)
@@ -271,6 +409,16 @@ function M.send_message(buf, passed_thread_id)
 		return
 	end
 
+	local shortcuts = require("amp.shortcuts")
+	message = shortcuts.expand_shortcuts(message)
+	
+	-- Validate working directory exists
+	if vim.fn.isdirectory(working_dir) == 0 then
+		vim.notify("❌ Working directory does not exist: " .. working_dir, vim.log.levels.ERROR)
+		logger.error("chat", "Invalid working directory: " .. working_dir)
+		return
+	end
+
 	M.state.buffers[buf] = M.state.buffers[buf] or {}
 	M.state.buffers[buf].sending = true
 	
@@ -296,8 +444,14 @@ function M.send_message(buf, passed_thread_id)
 	
 	if thread_id then
 		cmd = { "amp", "threads", "continue", thread_id, "--execute", message }
+		if amp.state.config.dangerously_allow_all then
+			table.insert(cmd, "--dangerously-allow-all")
+		end
 	else
 		cmd = { "amp", "--execute", message }
+		if amp.state.config.dangerously_allow_all then
+			table.insert(cmd, "--dangerously-allow-all")
+		end
 		job_opts.env = { AMP_THREAD_STORAGE_DIR = thread_storage_dir }
 	end
 
@@ -465,9 +619,15 @@ function M.send_message(buf, passed_thread_id)
 							save_buffer_to_file(buf, new_thread_id, true)
 							
 							logger.info("chat", "Thread created: " .. new_thread_id)
+							thread_id = new_thread_id
 						else
 							logger.warn("chat", "Could not extract thread ID from list output")
 						end
+					end
+
+					local current_thread_id = thread_id or (M.state.buffers[buf] and M.state.buffers[buf].thread_id)
+					if current_thread_id then
+						sync_metadata(buf, current_thread_id)
 					end
 
 					vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
@@ -542,8 +702,8 @@ end
 function M.open_chat_buffer(thread_id, initial_message, topic)
 	logger.info("chat", "open_chat_buffer called with thread_id: " .. (thread_id or "nil"))
 	
-	local working_dir = vim.fn.getcwd()
-	local buf = create_chat_buffer(thread_id, working_dir)
+	local buf = create_chat_buffer(thread_id, nil)
+	local working_dir = get_working_dir_from_buffer(buf) or vim.fn.getcwd()
 
 	local win = vim.api.nvim_get_current_win()
 	vim.api.nvim_win_set_buf(win, buf)
@@ -603,6 +763,7 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 					"# thread: https://ampcode.com/threads/" .. thread_id,
 					"# cwd: " .. normalize_path(working_dir),
 					"# filepath: " .. normalize_path(file_path),
+					"# visibility: private # (public, unlisted, workspace, group)",
 					"",
 					"---",
 					"",
@@ -640,6 +801,7 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 			if file_path then
 				table.insert(initial_lines, "# filepath: " .. normalize_path(file_path))
 			end
+			table.insert(initial_lines, "# visibility: private # (public, unlisted, workspace, group)")
 			table.insert(initial_lines, "")
 			table.insert(initial_lines, "---")
 			table.insert(initial_lines, "")
@@ -651,11 +813,13 @@ function M.open_chat_buffer(thread_id, initial_message, topic)
 	end
 
 	setup_buffer_keymaps(buf, thread_id)
+	setup_shortcuts_completion(buf)
 
 	M.state.buffers[buf] = {
 		thread_id = thread_id,
 		working_dir = working_dir,
 		created_at = os.time(),
+		last_visibility = get_visibility_from_buffer(buf),
 	}
 	
 	logger.info("chat", "Buffer state set - buf: " .. buf .. ", thread_id: " .. (thread_id or "nil"))
