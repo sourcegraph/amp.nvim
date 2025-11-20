@@ -93,19 +93,21 @@ end
 
 local function parse_stream_json_line(line)
 	if not line or line == "" then
-		return nil
+		return nil, nil
 	end
 	
 	local ok, parsed = pcall(vim.json.decode, line)
 	if not ok then
-		return nil
+		return nil, nil
 	end
 	
 	if not parsed then
-		return nil
+		return nil, nil
 	end
+
+	local session_id = parsed.session_id
 	
-	-- Handle assistant messages (thinking)
+	-- Handle assistant messages
 	if parsed.type == "assistant" and parsed.message then
 		if parsed.message.content then
 			local text_parts = {}
@@ -115,23 +117,79 @@ local function parse_stream_json_line(line)
 				end
 			end
 			if #text_parts > 0 then
-				return "💭 " .. table.concat(text_parts, "\n")
+				return table.concat(text_parts, "\n"), session_id
 			end
 		end
 	end
 	
-	-- Handle result messages
-	if parsed.type == "result" and parsed.result then
-		return "✅ " .. vim.inspect(parsed.result)
+	return nil, session_id
+end
+
+local function setup_new_thread(buf, new_thread_id)
+	if not vim.api.nvim_buf_is_valid(buf) then
+		return
+	end
+
+	logger.info("chat", "Setting up new thread: '" .. new_thread_id .. "'")
+	
+	M.state.buffers[buf] = M.state.buffers[buf] or {}
+	M.state.buffers[buf].thread_id = new_thread_id
+	
+	local buf_name = "Amp Chat: " .. new_thread_id .. ".md"
+	pcall(vim.api.nvim_buf_set_name, buf, buf_name)
+	
+	local thread_url = "https://ampcode.com/threads/" .. new_thread_id
+	logger.info("chat", "Thread URL: " .. thread_url)
+	
+	local new_file_path = get_chat_file_path(new_thread_id)
+	
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	
+	local has_filepath = false
+	local has_url = false
+	local filepath_line_idx = nil
+	local url_line_idx = nil
+	local cwd_line_idx = nil
+	local topic_line_idx = nil
+	
+	for i, line in ipairs(lines) do
+		if line:match("^# filepath:") then
+			has_filepath = true
+			filepath_line_idx = i - 1
+		end
+		if line:match("^# thread:") then
+			has_url = true
+			url_line_idx = i - 1
+		end
+		if line:match("^# cwd:") then
+			cwd_line_idx = i - 1
+		end
+		if line:match("^# topic:") then
+			topic_line_idx = i - 1
+		end
 	end
 	
-	-- Handle system messages
-	if parsed.type == "system" then
-		local msg = parsed.message or parsed.text or vim.inspect(parsed)
-		return "⚙️ " .. msg
+	-- Add thread URL after topic first (higher in file)
+	if not has_url and topic_line_idx then
+		vim.api.nvim_buf_set_lines(buf, topic_line_idx + 2, topic_line_idx + 2, false, { "# thread: " .. thread_url })
+		-- Update cwd_line_idx since we inserted a line above it
+		if cwd_line_idx then
+			cwd_line_idx = cwd_line_idx + 1
+		end
+	elseif has_url and url_line_idx then
+		vim.api.nvim_buf_set_lines(buf, url_line_idx, url_line_idx + 1, false, { "# thread: " .. thread_url })
 	end
 	
-	return nil
+	-- Then add filepath after cwd (lower in file)
+	if not has_filepath and cwd_line_idx and new_file_path then
+		local normalized_path = normalize_path(new_file_path)
+		vim.api.nvim_buf_set_lines(buf, cwd_line_idx + 1, cwd_line_idx + 1, false, { "# filepath: " .. normalized_path })
+	elseif has_filepath and filepath_line_idx and new_file_path then
+		local normalized_path = normalize_path(new_file_path)
+		vim.api.nvim_buf_set_lines(buf, filepath_line_idx, filepath_line_idx + 1, false, { "# filepath: " .. normalized_path })
+	end
+	
+	save_buffer_to_file(buf, new_thread_id, true)
 end
 
 local spinner_frames = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
@@ -303,6 +361,7 @@ local function get_user_input_range(buf)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	local separator_line = nil
 
+	-- Find the last separator
 	for i = #lines, 1, -1 do
 		if lines[i]:match("^🗨:") then
 			separator_line = i
@@ -311,7 +370,15 @@ local function get_user_input_range(buf)
 	end
 
 	if separator_line then
-		return separator_line, #lines
+		-- Look for the next agent marker or separator to define the end
+		local end_line = #lines
+		for i = separator_line + 1, #lines do
+			if lines[i]:match("^🦜:%[amp%]") or lines[i]:match("^🗨:") then
+				end_line = i - 1
+				break
+			end
+		end
+		return separator_line, end_line
 	end
 
 	return nil, nil
@@ -626,6 +693,66 @@ function M.sync_metadata_command()
 	sync_metadata(buf, thread_id)
 end
 
+local function ensure_output_window()
+	local amp = require("amp")
+	if not amp.state.config.use_output_window then
+		return nil, nil
+	end
+
+	-- Check if window is valid
+	if M.state.output_win and vim.api.nvim_win_is_valid(M.state.output_win) then
+		return M.state.output_win, M.state.output_buf
+	end
+
+	-- Check if buffer exists but window is closed
+	if M.state.output_buf and vim.api.nvim_buf_is_valid(M.state.output_buf) then
+		-- Open split with existing buffer
+		vim.cmd("botright 15split")
+		M.state.output_win = vim.api.nvim_get_current_win()
+		vim.api.nvim_win_set_buf(M.state.output_win, M.state.output_buf)
+	else
+		-- Create new buffer and window
+		vim.cmd("botright 15split")
+		M.state.output_win = vim.api.nvim_get_current_win()
+		M.state.output_buf = vim.api.nvim_create_buf(false, true) -- scratch buffer
+		
+		-- Try to name it, but ignore error if name exists
+		pcall(vim.api.nvim_buf_set_name, M.state.output_buf, "Amp Output")
+		
+		vim.api.nvim_set_option_value("filetype", "markdown", { buf = M.state.output_buf })
+		vim.api.nvim_set_option_value("buftype", "nofile", { buf = M.state.output_buf })
+		vim.api.nvim_set_option_value("bufhidden", "hide", { buf = M.state.output_buf })
+		vim.api.nvim_set_option_value("swapfile", false, { buf = M.state.output_buf })
+		vim.api.nvim_win_set_buf(M.state.output_win, M.state.output_buf)
+	end
+	
+	-- Set window options
+	vim.api.nvim_set_option_value("wrap", true, { win = M.state.output_win })
+	
+	-- Return focus to previous window
+	vim.cmd("wincmd p")
+	
+	return M.state.output_win, M.state.output_buf
+end
+
+local function append_to_output_window(lines)
+	local win, buf = ensure_output_window()
+	if not win or not buf then return end
+	
+	local buf_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	
+	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
+	vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+	
+	-- Scroll to bottom
+	if vim.api.nvim_win_is_valid(win) then
+		local new_count = vim.api.nvim_buf_line_count(buf)
+		vim.api.nvim_win_set_cursor(win, { new_count, 0 })
+		-- Force redraw to show update
+		vim.cmd("redraw")
+	end
+end
+
 function M.send_message(buf, passed_thread_id)
 	if M.state.buffers[buf] and M.state.buffers[buf].sending then
 		-- Queue the message instead of rejecting it
@@ -635,6 +762,9 @@ function M.send_message(buf, passed_thread_id)
 			local message = table.concat(message_lines, "\n"):gsub("^%s*(.-)%s*$", "%1")
 			
 			if message and message ~= "" then
+				local shortcuts = require("amp.shortcuts")
+				message = shortcuts.expand_shortcuts(message)
+				
 				M.state.buffers[buf].queued_messages = M.state.buffers[buf].queued_messages or {}
 				table.insert(M.state.buffers[buf].queued_messages, message)
 				
@@ -711,21 +841,22 @@ function M.send_message(buf, passed_thread_id)
 	vim.notify("⏳ Sending message to Amp...", vim.log.levels.INFO)
 
 	vim.api.nvim_set_option_value("modifiable", true, { buf = buf })
-	-- Add agent response area and immediately add a new input section for the next message
+	
+	-- Add a new input separator immediately so the user can queue the next message
+	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
+	
+	-- Add agent response area below the queue input
 	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🦜:[amp]", "" })
 	
-	-- Store the position where we'll add the next input separator after the agent response
+	-- Store the position of the agent response
 	local agent_response_line = vim.api.nvim_buf_line_count(buf)
 
 	local spinner_timer = start_spinner(buf)
 	
-	-- Immediately add a new input separator so the user can start typing the next message
-	vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
-	
 	-- Initialize auto-scroll state (default: enabled to follow agent output)
 	M.state.buffers[buf].auto_scroll = M.state.buffers[buf].auto_scroll == nil and true or M.state.buffers[buf].auto_scroll
 	
-	-- Scroll to show the agent response area (not the new input area)
+	-- Scroll to show the agent response area
 	local win = vim.fn.bufwinid(buf)
 	if win ~= -1 then
 		vim.api.nvim_win_set_cursor(win, { agent_response_line, 0 })
@@ -766,6 +897,14 @@ function M.send_message(buf, passed_thread_id)
 		table.insert(cmd, message)
 		job_opts.env = { AMP_THREAD_STORAGE_DIR = thread_storage_dir }
 	end
+
+	-- Wrap the command to pipe raw stdout to a log file for debugging
+	local escaped_args = {}
+	for _, arg in ipairs(cmd) do
+		table.insert(escaped_args, vim.fn.shellescape(arg))
+	end
+	local shell_cmd = table.concat(escaped_args, " ") .. " | tee -a amp_raw.log"
+	cmd = { "sh", "-c", shell_cmd }
 
 	local response_lines = {}
 	local timeout_timer = nil
@@ -832,8 +971,15 @@ function M.send_message(buf, passed_thread_id)
 			for _, line in ipairs(data) do
 				if amp.state.config.use_stream_json then
 					logger.debug("chat", "stdout raw line: " .. line)
-					local text = parse_stream_json_line(line)
+					local text, session_id = parse_stream_json_line(line)
+					
+					if session_id and not thread_id then
+						thread_id = session_id
+						setup_new_thread(buf, thread_id)
+					end
+					
 					if text then
+						text = text:gsub("\\n", "\n")
 						logger.debug("chat", "stdout parsed text: " .. text)
 						-- Split multi-line text into separate lines for buffer insertion
 						local text_lines = vim.split(text, "\n", { plain = true })
@@ -850,22 +996,16 @@ function M.send_message(buf, passed_thread_id)
 			end
 
 			if #cleaned_data > 0 then
-				-- Find the last 🗨: separator and insert before it
-				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-				local insert_pos = #lines
-				for i = #lines, 1, -1 do
-					if lines[i]:match("^🗨:") then
-						insert_pos = i - 1
-						break
-					end
-				end
+				append_to_output_window(cleaned_data)
 				
-				vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, cleaned_data)
+				-- Append to the end of the buffer (below the queue input)
+				vim.api.nvim_buf_set_lines(buf, -1, -1, false, cleaned_data)
 
 				local win = vim.fn.bufwinid(buf)
 				if win ~= -1 and M.state.buffers[buf] and M.state.buffers[buf].auto_scroll then
 					-- Auto-scroll to show streaming content if enabled
-					vim.api.nvim_win_set_cursor(win, { insert_pos + #cleaned_data, 0 })
+					local new_line_count = vim.api.nvim_buf_line_count(buf)
+					vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
 					vim.cmd("redraw")
 				end
 				
@@ -897,8 +1037,15 @@ function M.send_message(buf, passed_thread_id)
 			for _, line in ipairs(data) do
 				if amp.state.config.use_stream_json then
 					logger.debug("chat", "stderr raw line: " .. line)
-					local text = parse_stream_json_line(line)
+					local text, session_id = parse_stream_json_line(line)
+					
+					if session_id and not thread_id then
+						thread_id = session_id
+						setup_new_thread(buf, thread_id)
+					end
+					
 					if text then
+						text = text:gsub("\\n", "\n")
 						logger.debug("chat", "stderr parsed text: " .. text)
 						-- Split multi-line text into separate lines for buffer insertion
 						local text_lines = vim.split(text, "\n", { plain = true })
@@ -927,22 +1074,16 @@ function M.send_message(buf, passed_thread_id)
 			end
 
 			if #cleaned_data > 0 then
-				-- Find the last 🗨: separator and insert before it
-				local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-				local insert_pos = #lines
-				for i = #lines, 1, -1 do
-					if lines[i]:match("^🗨:") then
-						insert_pos = i - 1
-						break
-					end
-				end
+				append_to_output_window(cleaned_data)
 				
-				vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, cleaned_data)
+				-- Append to the end of the buffer (below the queue input)
+				vim.api.nvim_buf_set_lines(buf, -1, -1, false, cleaned_data)
 
 				local win = vim.fn.bufwinid(buf)
 				if win ~= -1 and M.state.buffers[buf] and M.state.buffers[buf].auto_scroll then
 					-- Auto-scroll to show streaming content if enabled
-					vim.api.nvim_win_set_cursor(win, { insert_pos + #cleaned_data, 0 })
+					local new_line_count = vim.api.nvim_buf_line_count(buf)
+					vim.api.nvim_win_set_cursor(win, { new_line_count, 0 })
 					vim.cmd("redraw")
 				end
 				
@@ -993,79 +1134,7 @@ function M.send_message(buf, passed_thread_id)
 						
 						if new_thread_id then
 							logger.info("chat", "Extracted thread ID from amp threads list: '" .. new_thread_id .. "'")
-							
-							M.state.buffers[buf] = M.state.buffers[buf] or {}
-							M.state.buffers[buf].thread_id = new_thread_id
-							
-							local buf_name = "Amp Chat: " .. new_thread_id .. ".md"
-							pcall(vim.api.nvim_buf_set_name, buf, buf_name)
-							
-							local thread_url = "https://ampcode.com/threads/" .. new_thread_id
-							logger.info("chat", "Thread URL: " .. thread_url)
-							
-							local new_file_path = get_chat_file_path(new_thread_id)
-							
-							local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-							logger.info("chat", "Buffer has " .. #lines .. " lines before inserting metadata")
-							for i = 1, math.min(10, #lines) do
-								logger.info("chat", "Line " .. (i-1) .. ": " .. lines[i])
-							end
-							
-							local has_filepath = false
-							local has_url = false
-							local filepath_line_idx = nil
-							local url_line_idx = nil
-							local cwd_line_idx = nil
-							local topic_line_idx = nil
-							
-							for i, line in ipairs(lines) do
-								if line:match("^# filepath:") then
-									has_filepath = true
-									filepath_line_idx = i - 1
-								end
-								if line:match("^# thread:") then
-									has_url = true
-									url_line_idx = i - 1
-								end
-								if line:match("^# cwd:") then
-									cwd_line_idx = i - 1
-								end
-								if line:match("^# topic:") then
-									topic_line_idx = i - 1
-								end
-							end
-							
-							logger.info("chat", "Indices - topic: " .. tostring(topic_line_idx) .. ", thread: " .. tostring(url_line_idx) .. ", cwd: " .. tostring(cwd_line_idx) .. ", filepath: " .. tostring(filepath_line_idx))
-							
-							-- Add thread URL after topic first (higher in file)
-							if not has_url and topic_line_idx then
-								-- Insert after "# topic: ..." and the blank line
-								-- Structure: topic (line 0), blank (line 1), insert here (line 2)
-								vim.api.nvim_buf_set_lines(buf, topic_line_idx + 2, topic_line_idx + 2, false, { "# thread: " .. thread_url })
-								logger.info("chat", "Added thread URL line at line " .. (topic_line_idx + 2))
-								-- Update cwd_line_idx since we inserted a line above it
-								if cwd_line_idx then
-									cwd_line_idx = cwd_line_idx + 1
-								end
-							elseif has_url and url_line_idx then
-								vim.api.nvim_buf_set_lines(buf, url_line_idx, url_line_idx + 1, false, { "# thread: " .. thread_url })
-								logger.info("chat", "Updated thread URL line at line " .. url_line_idx)
-							end
-							
-							-- Then add filepath after cwd (lower in file)
-							if not has_filepath and cwd_line_idx and new_file_path then
-								local normalized_path = normalize_path(new_file_path)
-								vim.api.nvim_buf_set_lines(buf, cwd_line_idx + 1, cwd_line_idx + 1, false, { "# filepath: " .. normalized_path })
-								logger.info("chat", "Added filepath line after cwd at line " .. (cwd_line_idx + 1))
-							elseif has_filepath and filepath_line_idx and new_file_path then
-								local normalized_path = normalize_path(new_file_path)
-								vim.api.nvim_buf_set_lines(buf, filepath_line_idx, filepath_line_idx + 1, false, { "# filepath: " .. normalized_path })
-								logger.info("chat", "Updated filepath line at line " .. filepath_line_idx)
-							end
-							
-							save_buffer_to_file(buf, new_thread_id, true)
-							
-							logger.info("chat", "Thread created: " .. new_thread_id)
+							setup_new_thread(buf, new_thread_id)
 							thread_id = new_thread_id
 						else
 							logger.warn("chat", "Could not extract thread ID from list output")
@@ -1080,7 +1149,41 @@ function M.send_message(buf, passed_thread_id)
 						-- Don't sync metadata here since we already did it before sending
 					end
 
-					-- Check for queued messages and process them
+					-- Handle queue input cleanup and setup for next message
+					local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+					local last_agent_line = nil
+					for i = #lines, 1, -1 do
+						if lines[i]:match("^🦜:%[amp%]") then
+							last_agent_line = i
+							break
+						end
+					end
+
+					local draft_content = nil
+					if last_agent_line then
+						-- Search backwards for the queue input
+						for i = last_agent_line - 1, 1, -1 do
+							if lines[i]:match("^🗨:") then
+								-- Found the queue input
+								local content_lines = vim.api.nvim_buf_get_lines(buf, i, last_agent_line - 1, false)
+								if #content_lines > 0 then
+									local text = table.concat(content_lines, "\n")
+									if text:match("%S") then
+										draft_content = text
+									end
+								end
+								
+								-- Remove the queue input block
+								vim.api.nvim_buf_set_lines(buf, i - 1, last_agent_line - 1, false, {})
+								break
+							end
+						end
+					end
+
+					-- Add new input block at the bottom
+					vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "", "🗨:", "" })
+
+					-- Check for queued messages
 					local has_queued = M.state.buffers[buf] 
 						and M.state.buffers[buf].queued_messages 
 						and #M.state.buffers[buf].queued_messages > 0
@@ -1089,20 +1192,8 @@ function M.send_message(buf, passed_thread_id)
 						local queued_message = table.remove(M.state.buffers[buf].queued_messages, 1)
 						local remaining = #M.state.buffers[buf].queued_messages
 						
-						-- Find the last 🗨: separator and replace the content after it
-						local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-						local separator_line = nil
-						for i = #lines, 1, -1 do
-							if lines[i]:match("^🗨:") then
-								separator_line = i
-								break
-							end
-						end
-						
-						if separator_line then
-							-- Replace content after separator with queued message
-							vim.api.nvim_buf_set_lines(buf, separator_line, -1, false, { queued_message, "" })
-						end
+						-- Put into bottom block
+						vim.api.nvim_buf_set_lines(buf, -1, -1, false, vim.split(queued_message, "\n"))
 						
 						vim.notify("✅ Message sent. Processing queued message (" .. remaining .. " remaining)...", vim.log.levels.INFO)
 						
@@ -1112,8 +1203,11 @@ function M.send_message(buf, passed_thread_id)
 								M.send_message(buf, current_thread_id)
 							end
 						end, 100)
+					elseif draft_content then
+						-- Restore draft content
+						vim.api.nvim_buf_set_lines(buf, -1, -1, false, vim.split(draft_content, "\n"))
+						vim.notify("✅ Message sent. Draft restored.", vim.log.levels.INFO)
 					else
-						-- Don't add a new separator - we already added it immediately when sending
 						vim.notify("✅ Message sent successfully", vim.log.levels.INFO)
 					end
 				else

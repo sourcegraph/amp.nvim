@@ -11,6 +11,7 @@ M.defaults = {
 	sync_metadata_key = "<C-s>",
 	dangerously_allow_all = false,
 	use_stream_json = true,
+	use_output_window = false,
 }
 
 function M.validate(config)
@@ -48,6 +49,7 @@ function M.validate(config)
 	assert(type(config.dangerously_allow_all) == "boolean", "dangerously_allow_all must be a boolean")
 
 	assert(type(config.use_stream_json) == "boolean", "use_stream_json must be a boolean")
+	assert(type(config.use_output_window) == "boolean", "use_output_window must be a boolean")
 
 	return true
 end
