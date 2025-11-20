@@ -63,6 +63,9 @@ function M.setup(opts)
 
 	logger.setup(M.state.config)
 
+	local shortcuts = require("amp.shortcuts")
+	shortcuts.setup(M.state.config.shortcuts)
+
 	if M.state.config.auto_start then
 		M.start()
 	end
@@ -307,6 +310,36 @@ function M._create_commands()
 
 		logger.info("command", "IDE notifications sent!")
 	end, { desc = "Test Amp IDE protocol notifications" })
+
+	vim.api.nvim_create_user_command("AmpThreads", function()
+		local telescope = require("amp.telescope")
+		telescope.list_threads()
+	end, { desc = "Browse and manage Amp threads with Telescope" })
+
+	vim.api.nvim_create_user_command("AmpChat", function()
+		local chat = require("amp.chat")
+		chat.open_chat_buffer()
+	end, { desc = "Open a new Amp chat buffer" })
+
+	vim.api.nvim_create_user_command("AmpChatThread", function(opts)
+		local thread_id = opts.args
+		if thread_id == "" then
+			vim.notify("Please provide a thread ID", vim.log.levels.ERROR)
+			return
+		end
+		local chat = require("amp.chat")
+		chat.open_chat_buffer(thread_id)
+	end, { nargs = 1, desc = "Open Amp chat buffer for a specific thread" })
+	
+	vim.api.nvim_create_user_command("AmpSaveMetadata", function()
+		local chat = require("amp.chat")
+		chat.sync_metadata_command()
+	end, { desc = "Sync thread metadata (visibility and topic) for current chat buffer" })
+
+	vim.api.nvim_create_user_command("AmpShortcuts", function()
+		local telescope = require("amp.telescope")
+		telescope.list_shortcuts()
+	end, { desc = "Browse and insert Amp shortcuts with Telescope" })
 end
 
 return M

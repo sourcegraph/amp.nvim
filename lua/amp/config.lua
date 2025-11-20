@@ -4,6 +4,14 @@ M.defaults = {
 	port_range = { min = 10000, max = 65535 },
 	auto_start = true,
 	log_level = "info",
+	thread_storage_dir = "/tmp",
+	thread_response_timeout = 300000,
+	shortcuts = {},
+	submit_key = "<C-g>",
+	sync_metadata_key = "<C-s>",
+	dangerously_allow_all = false,
+	use_stream_json = true,
+	use_output_window = false,
 }
 
 function M.validate(config)
@@ -29,6 +37,20 @@ function M.validate(config)
 	end
 	assert(is_valid, "log_level must be one of: " .. table.concat(valid_log_levels, ", "))
 
+	assert(type(config.thread_storage_dir) == "string", "thread_storage_dir must be a string")
+
+	assert(
+		type(config.thread_response_timeout) == "number" and config.thread_response_timeout > 0,
+		"thread_response_timeout must be a positive number (in milliseconds)"
+	)
+
+	assert(type(config.shortcuts) == "table", "shortcuts must be a table")
+
+	assert(type(config.dangerously_allow_all) == "boolean", "dangerously_allow_all must be a boolean")
+
+	assert(type(config.use_stream_json) == "boolean", "use_stream_json must be a boolean")
+	assert(type(config.use_output_window) == "boolean", "use_output_window must be a boolean")
+
 	return true
 end
 
@@ -43,6 +65,23 @@ function M.apply(user_config)
 				config[k] = v
 			end
 		end
+	end
+
+	config.thread_storage_dir = vim.fn.expand(config.thread_storage_dir)
+
+	if config.shortcuts and type(config.shortcuts) == "table" then
+		local normalized_shortcuts = {}
+		for i, shortcut in ipairs(config.shortcuts) do
+			if type(shortcut) == "table" and shortcut.name then
+				normalized_shortcuts[shortcut.name] = shortcut
+			end
+		end
+		for k, v in pairs(config.shortcuts) do
+			if type(k) == "string" then
+				normalized_shortcuts[k] = v
+			end
+		end
+		config.shortcuts = normalized_shortcuts
 	end
 
 	M.validate(config)
