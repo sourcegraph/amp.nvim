@@ -319,6 +319,12 @@ function M._handle_message(client, message)
 			-- Split content into lines, preserving empty lines
 			local lines = vim.split(fullContent, "\n")
 
+			-- Remove trailing empty string if content ended with newline
+			-- (nvim_buf_set_lines expects no trailing empty for final newline)
+			if #lines > 0 and lines[#lines] == "" then
+				table.remove(lines)
+			end
+
 			-- Replace entire buffer content
 			vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
@@ -329,7 +335,13 @@ function M._handle_message(client, message)
 				error("Cannot open file for writing")
 			end
 
-			uv.fs_write(fd, fullContent, 0)
+			-- Ensure file ends with newline (standard POSIX convention)
+			local content_to_write = fullContent
+			if content_to_write:sub(-1) ~= "\n" then
+				content_to_write = content_to_write .. "\n"
+			end
+
+			uv.fs_write(fd, content_to_write, 0)
 			uv.fs_close(fd)
 
 			-- Mark buffer as not modified since we just saved it
