@@ -395,6 +395,72 @@ function M._handle_message(client, message)
 		return
 	end
 
+	-- Handle openURI request
+	if request.openURI then
+		local uri = request.openURI.uri
+
+		if not uri then
+			local error_response = ide.wrap_error(id, {
+				code = -32602,
+				message = "Invalid params",
+				data = "openURI requires uri parameter",
+			})
+			M.send_ide(client, error_response)
+			return
+		end
+
+		-- Only support file:// URIs for now
+		if not vim.startswith(uri, "file://") then
+			local response = ide.wrap_response(id, {
+				openURI = {
+					success = false,
+					message = "Unsupported URI scheme: " .. uri,
+				},
+			})
+			M.send_ide(client, response)
+			return
+		end
+
+		local success, error_msg = pcall(function()
+			-- Convert file:// URI to path
+			local path = uri:gsub("^file://", "")
+			-- Decode URL-encoded characters (e.g., %20 -> space)
+			path = path:gsub("%%(%x%x)", function(hex)
+				return string.char(tonumber(hex, 16))
+			end)
+			-- Normalize to absolute path (resolves .. components)
+			path = vim.fn.fnamemodify(path, ":p")
+
+			-- Check if file exists
+			local stat = vim.loop.fs_stat(path)
+			if not stat then
+				error("File not found: " .. path)
+			end
+
+			-- Open the file in Neovim
+			vim.cmd("edit " .. vim.fn.fnameescape(path))
+		end)
+
+		if success then
+			local response = ide.wrap_response(id, {
+				openURI = {
+					success = true,
+					message = "Opened " .. uri,
+				},
+			})
+			M.send_ide(client, response)
+		else
+			local response = ide.wrap_response(id, {
+				openURI = {
+					success = false,
+					message = tostring(error_msg),
+				},
+			})
+			M.send_ide(client, response)
+		end
+		return
+	end
+
 	-- Unknown request
 	local error_response = ide.wrap_error(id, {
 		code = -32601,
