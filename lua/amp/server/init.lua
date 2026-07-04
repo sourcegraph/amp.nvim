@@ -4,6 +4,128 @@ local tcp_server = require("amp.server.tcp")
 
 local M = {}
 
+local open_uri_namespace = vim.api.nvim_create_namespace("amp.open_uri")
+local open_uri_highlight_ids = {}
+
+local function decode_uri_component(value)
+	return value:gsub("%%(%x%x)", function(hex)
+		return string.char(tonumber(hex, 16))
+	end)
+end
+
+local function parse_uri_position(fragment)
+	if not fragment or fragment == "" then
+		return nil
+	end
+
+	fragment = decode_uri_component(fragment)
+
+	local start_line, start_separator, start_column, end_line, end_separator, end_column =
+		fragment:match("^[Ll](%d+)([:Cc]?)(%d*)%-[Ll](%d+)([:Cc]?)(%d*)$")
+	if not start_line then
+		start_line, start_separator, start_column = fragment:match("^[Ll](%d+)([:Cc]?)(%d*)$")
+	end
+
+	if not start_line then
+		return nil
+	end
+
+	if (start_separator ~= "" and start_column == "") or (start_separator == "" and start_column ~= "") then
+		return nil
+	end
+
+	if end_line then
+		if (end_separator ~= "" and end_column == "") or (end_separator == "" and end_column ~= "") then
+			return nil
+		end
+
+		if tonumber(end_line) < tonumber(start_line) then
+			return nil
+		end
+	end
+
+	local line = tonumber(start_line)
+	local column = start_column ~= "" and tonumber(start_column) or 1
+	local range_end_line = end_line and tonumber(end_line) or line
+	local range_end_column = end_column ~= "" and tonumber(end_column) or nil
+	if line < 1 or column < 1 then
+		return nil
+	end
+
+	if range_end_column and range_end_column < 1 then
+		return nil
+	end
+
+	if range_end_column and line == range_end_line and range_end_column < column then
+		return nil
+	end
+
+	return { line = line, column = column, end_line = range_end_line, end_column = range_end_column }
+end
+
+local function split_uri_fragment(uri)
+	local fragment_start = uri:find("#", 1, true)
+	if not fragment_start then
+		return uri, nil
+	end
+
+	return uri:sub(1, fragment_start - 1), uri:sub(fragment_start + 1)
+end
+
+local function highlight_uri_position(bufnr, position)
+	open_uri_highlight_ids[bufnr] = (open_uri_highlight_ids[bufnr] or 0) + 1
+	local highlight_id = open_uri_highlight_ids[bufnr]
+
+	vim.api.nvim_buf_clear_namespace(bufnr, open_uri_namespace, 0, -1)
+
+	local line_count = math.max(vim.api.nvim_buf_line_count(bufnr), 1)
+	local start_line = math.min(position.line, line_count)
+	local end_line = math.min(position.end_line, line_count)
+	if end_line < start_line then
+		end_line = start_line
+	end
+
+	for line = start_line, end_line do
+		vim.api.nvim_buf_set_extmark(bufnr, open_uri_namespace, line - 1, 0, {
+			line_hl_group = "Search",
+			priority = 200,
+		})
+	end
+
+	vim.defer_fn(function()
+		if highlight_id ~= open_uri_highlight_ids[bufnr] then
+			return
+		end
+
+		if vim.api.nvim_buf_is_valid(bufnr) then
+			vim.api.nvim_buf_clear_namespace(bufnr, open_uri_namespace, 0, -1)
+		end
+
+		open_uri_highlight_ids[bufnr] = nil
+	end, 1500)
+end
+
+local function uri_column_to_byte(line_text, column)
+	local byte_index = vim.fn.byteidx(line_text, column - 1)
+	if byte_index < 0 then
+		return #line_text
+	end
+
+	return byte_index
+end
+
+local function reveal_uri_position(position)
+	local bufnr = vim.api.nvim_get_current_buf()
+	local line_count = math.max(vim.api.nvim_buf_line_count(bufnr), 1)
+	local line = math.min(position.line, line_count)
+	local line_text = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
+	local column = uri_column_to_byte(line_text, position.column)
+
+	vim.api.nvim_win_set_cursor(0, { line, column })
+	vim.cmd("normal! zvzz")
+	highlight_uri_position(bufnr, position)
+end
+
 ---@class ServerState
 ---@field server table|nil The TCP server instance
 ---@field port number|nil The port server is running on
@@ -432,12 +554,11 @@ function M._handle_message(client, message)
 		end
 
 		local success, error_msg = pcall(function()
+			local file_uri, fragment = split_uri_fragment(uri)
+			local position = parse_uri_position(fragment)
+
 			-- Convert file:// URI to path
-			local path = uri:gsub("^file://", "")
-			-- Decode URL-encoded characters (e.g., %20 -> space)
-			path = path:gsub("%%(%x%x)", function(hex)
-				return string.char(tonumber(hex, 16))
-			end)
+			local path = vim.uri_to_fname(file_uri)
 			-- Normalize to absolute path (resolves .. components)
 			path = vim.fn.fnamemodify(path, ":p")
 
@@ -449,6 +570,10 @@ function M._handle_message(client, message)
 
 			-- Open the file in Neovim
 			vim.cmd("edit " .. vim.fn.fnameescape(path))
+
+			if position then
+				reveal_uri_position(position)
+			end
 		end)
 
 		if success then
