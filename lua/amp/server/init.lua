@@ -18,46 +18,48 @@ local function parse_uri_position(fragment)
 		return nil
 	end
 
+	local invalid_fragment = "Invalid file URI position fragment: #" .. fragment
 	fragment = decode_uri_component(fragment)
 
 	local start_line, start_separator, start_column, end_line, end_separator, end_column =
-		fragment:match("^[Ll](%d+)([:Cc]?)(%d*)%-[Ll](%d+)([:Cc]?)(%d*)$")
+		fragment:match("^[Ll](%d+)([:Cc]?)(%d*)%-[Ll]?(%d+)([:Cc]?)(%d*)$")
 	if not start_line then
 		start_line, start_separator, start_column = fragment:match("^[Ll](%d+)([:Cc]?)(%d*)$")
 	end
 
 	if not start_line then
-		return nil
+		return nil, invalid_fragment
 	end
 
 	if (start_separator ~= "" and start_column == "") or (start_separator == "" and start_column ~= "") then
-		return nil
+		return nil, invalid_fragment
 	end
 
 	if end_line then
 		if (end_separator ~= "" and end_column == "") or (end_separator == "" and end_column ~= "") then
-			return nil
+			return nil, invalid_fragment
 		end
 
 		if tonumber(end_line) < tonumber(start_line) then
-			return nil
+			return nil, invalid_fragment
 		end
 	end
 
 	local line = tonumber(start_line)
 	local column = start_column ~= "" and tonumber(start_column) or 1
 	local range_end_line = end_line and tonumber(end_line) or line
-	local range_end_column = end_column ~= "" and tonumber(end_column) or nil
+	local range_end_column = end_column ~= "" and tonumber(end_column)
+		or (not end_line and start_column ~= "" and column or nil)
 	if line < 1 or column < 1 then
-		return nil
+		return nil, invalid_fragment
 	end
 
 	if range_end_column and range_end_column < 1 then
-		return nil
+		return nil, invalid_fragment
 	end
 
 	if range_end_column and line == range_end_line and range_end_column < column then
-		return nil
+		return nil, invalid_fragment
 	end
 
 	return { line = line, column = column, end_line = range_end_line, end_column = range_end_column }
@@ -72,25 +74,73 @@ local function split_uri_fragment(uri)
 	return uri:sub(1, fragment_start - 1), uri:sub(fragment_start + 1)
 end
 
+local function uri_column_to_byte(line_text, column)
+	local byte_index = vim.fn.byteidx(line_text, column - 1)
+	if byte_index < 0 then
+		return #line_text
+	end
+
+	return byte_index
+end
+
+local function validate_uri_position(bufnr, position)
+	local line_count = math.max(vim.api.nvim_buf_line_count(bufnr), 1)
+	if position.line > line_count or position.end_line > line_count then
+		return false, ("URI position is outside file with %d lines"):format(line_count)
+	end
+
+	local start_text = vim.api.nvim_buf_get_lines(bufnr, position.line - 1, position.line, false)[1] or ""
+	local start_column_count = math.max(vim.fn.strchars(start_text), 1)
+	if position.column > start_column_count then
+		return false, ("URI position column %d is outside line %d with %d columns"):format(
+			position.column,
+			position.line,
+			start_column_count
+		)
+	end
+
+	if position.end_column then
+		local end_text = vim.api.nvim_buf_get_lines(bufnr, position.end_line - 1, position.end_line, false)[1] or ""
+		local end_column_count = math.max(vim.fn.strchars(end_text), 1)
+		if position.end_column > end_column_count then
+			return false, ("URI position column %d is outside line %d with %d columns"):format(
+				position.end_column,
+				position.end_line,
+				end_column_count
+			)
+		end
+	end
+
+	return true
+end
+
 local function highlight_uri_position(bufnr, position)
 	open_uri_highlight_ids[bufnr] = (open_uri_highlight_ids[bufnr] or 0) + 1
 	local highlight_id = open_uri_highlight_ids[bufnr]
 
 	vim.api.nvim_buf_clear_namespace(bufnr, open_uri_namespace, 0, -1)
 
-	local line_count = math.max(vim.api.nvim_buf_line_count(bufnr), 1)
-	local start_line = math.min(position.line, line_count)
-	local end_line = math.min(position.end_line, line_count)
-	if end_line < start_line then
-		end_line = start_line
+	local start_text = vim.api.nvim_buf_get_lines(bufnr, position.line - 1, position.line, false)[1] or ""
+	local end_text = vim.api.nvim_buf_get_lines(bufnr, position.end_line - 1, position.end_line, false)[1] or ""
+	local end_column = position.end_column and uri_column_to_byte(end_text, position.end_column + 1) or #end_text
+	local options = {
+		end_row = position.end_line - 1,
+		end_col = end_column,
+		hl_group = "Search",
+		hl_eol = not position.end_column,
+		priority = 200,
+	}
+	if position.line == position.end_line and end_text == "" and not position.end_column then
+		options.line_hl_group = "Search"
 	end
 
-	for line = start_line, end_line do
-		vim.api.nvim_buf_set_extmark(bufnr, open_uri_namespace, line - 1, 0, {
-			line_hl_group = "Search",
-			priority = 200,
-		})
-	end
+	vim.api.nvim_buf_set_extmark(
+		bufnr,
+		open_uri_namespace,
+		position.line - 1,
+		uri_column_to_byte(start_text, position.column),
+		options
+	)
 
 	vim.defer_fn(function()
 		if highlight_id ~= open_uri_highlight_ids[bufnr] then
@@ -105,19 +155,9 @@ local function highlight_uri_position(bufnr, position)
 	end, 1500)
 end
 
-local function uri_column_to_byte(line_text, column)
-	local byte_index = vim.fn.byteidx(line_text, column - 1)
-	if byte_index < 0 then
-		return #line_text
-	end
-
-	return byte_index
-end
-
 local function reveal_uri_position(position)
 	local bufnr = vim.api.nvim_get_current_buf()
-	local line_count = math.max(vim.api.nvim_buf_line_count(bufnr), 1)
-	local line = math.min(position.line, line_count)
+	local line = position.line
 	local line_text = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)[1] or ""
 	local column = uri_column_to_byte(line_text, position.column)
 
@@ -553,10 +593,20 @@ function M._handle_message(client, message)
 			return
 		end
 
-		local success, error_msg = pcall(function()
-			local file_uri, fragment = split_uri_fragment(uri)
-			local position = parse_uri_position(fragment)
+		local file_uri, fragment = split_uri_fragment(uri)
+		local position, position_error = parse_uri_position(fragment)
+		if position_error then
+			local response = ide.wrap_response(id, {
+				openURI = {
+					success = false,
+					message = position_error,
+				},
+			})
+			M.send_ide(client, response)
+			return
+		end
 
+		local success, error_msg = pcall(function()
 			-- Convert file:// URI to path
 			local path = vim.uri_to_fname(file_uri)
 			-- Normalize to absolute path (resolves .. components)
@@ -566,6 +616,15 @@ function M._handle_message(client, message)
 			local stat = vim.loop.fs_stat(path)
 			if not stat then
 				error("File not found: " .. path)
+			end
+
+			if position then
+				local bufnr = vim.fn.bufnr(path, true)
+				vim.fn.bufload(bufnr)
+				local valid_position, validation_error = validate_uri_position(bufnr, position)
+				if not valid_position then
+					error(validation_error, 0)
+				end
 			end
 
 			-- Open the file in Neovim
