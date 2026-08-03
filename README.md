@@ -1,4 +1,13 @@
-# Amp Neovim Plugin
+# amp.nvim (deprecated)
+
+> [!WARNING]
+> **amp.nvim is deprecated and unmaintained.** Amp no longer maintains editor
+> extensions. Use [Amp on the web](https://ampcode.com) or the
+> [Amp CLI](https://ampcode.com/manual#cli) instead. For context, read
+> [The Coding Agent Is Dead](https://ampcode.com/news/the-coding-agent-is-dead).
+
+The documentation below is retained for existing users, but new installations
+are not recommended.
 
 This plugin allows the [Amp CLI](https://ampcode.com/manual#cli) to see the file you currently have open in your Neovim instance, along with your cursor position and your text selection.
 
@@ -13,7 +22,7 @@ When installed, this plugin allows Neovim to:
 - Provide Neovim LSP diagnostics to Amp through the companion Amp plugin
 - Automatically reconnects when you restart Neovim in the same directory
 
-## Installation
+## Legacy Installation (not recommended)
 
 ### Using lazy.nvim
 
@@ -151,9 +160,10 @@ end, {
 })
 ```
 
-## Feature Ideas
+## Maintenance Status
 
-Do you have a feature request or an idea? Submit an issue in this repo!
+This plugin is unmaintained. No new features or fixes are planned. Use the
+[Amp CLI](https://ampcode.com/manual#cli) instead.
 
 ## Development
 
@@ -179,4 +189,5 @@ The amp.nvim plugin logs to `~/.cache/nvim/amp.log`.
 
 ## Contributing
 
-Contributors should follow the [Sourcegraph Community Code of Conduct](https://sourcegraph.notion.site/Sourcegraph-Community-Code-of-Conduct-c7cef6b270c84fb2882808d4d82995dd).
+This plugin is deprecated and unmaintained, so new feature contributions are
+not being accepted.
